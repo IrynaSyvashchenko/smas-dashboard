@@ -101,8 +101,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const allDates=[...new Set(Object.values(D.managers).flatMap(m=>m.dates))].sort();
   const mkDs=key=>Object.entries(D.managers).map(([n,m])=>({label:n,data:allDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:m[key][i]}),borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
   new Chart(cplChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('cpl')},options:{interaction:{mode:'index',intersect:false}}});
-  new Chart(leadsChart,{type:'bar',data:{labels:allDates.map(dd),datasets:mkDs('leads')},options:{scales:{x:{stacked:true},y:{stacked:true}}}});
-  new Chart(spendChart,{type:'bar',data:{labels:allDates.map(dd),datasets:mkDs('spend')},options:{scales:{x:{stacked:true},y:{stacked:true}}}});
+  new Chart(leadsChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('leads')},options:{interaction:{mode:'index',intersect:false}}});
+  new Chart(spendChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
   const cr=[...D.creatives].sort((a,b)=>(a.cpa??1e9)-(b.cpa??1e9));
   new Chart(cpaChart,{type:'bar',data:{labels:cr.map(c=>c.name+' · '+c.m),datasets:[{label:'CPA $',data:cr.map(c=>c.cpa),backgroundColor:cr.map(c=>COLORS[c.m])}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
   const tb=document.querySelector('#crTable tbody');
