@@ -91,7 +91,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   for(const [name,m] of Object.entries(D.managers)){
     const n=m.dates.length;
     card(document.getElementById('cards1'),name,m,sum(m.spend.slice(-1)),sum(m.leads.slice(-1)),m.bookings1d??0,
-      `<div class="row"><span class="l">Дата</span><b>${dd(m.dates[n-1])}</b></div>`);
+      `<div class="row"><span class="l">Записи зі старих</span><b>${m.bookingsOld1d??0}</b></div>
+       <div class="row"><span class="l">Дата</span><b>${dd(m.dates[n-1])}</b></div>`);
     card(document.getElementById('cards7'),name,m,sum(m.spend.slice(-7)),sum(m.leads.slice(-7)),m.bookings7d??0,
       `<div class="row"><span class="l">Днів у періоді</span><b>${Math.min(7,n)}</b></div>`);
     card(document.getElementById('cardsAll'),name,m,m.totalSpend,m.totalLeads,m.bookings,
@@ -111,7 +112,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const st=c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого');
     tb.insertAdjacentHTML('beforeend',`<tr><td>${c.name} · ${c.adset}</td><td>${c.m}</td><td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td><td>${c.book}</td><td>${fmt(c.cpa)} <span class="tag ${cls}">${st}</span></td><td>${c.conv==null?'—':c.conv+'%'}</td></tr>`);
   }
-  document.getElementById('foot').textContent='Ліди таргетолога Ірини · Записи в періодах — по лідах, створених у періоді · CPA від витрат лід-форм (Instagram Direct окремо) · Дані: Meta Ads (Windsor) + Google-таблиця';
+  document.getElementById('foot').textContent='Ліди таргетолога Ірини · Записи — по лідах, створених у періоді; «зі старих» — внесені сьогодні по раніше створених лідах · CPA від витрат лід-форм (Instagram Direct окремо) · Дані: Meta Ads (Windsor) + Google-таблиця';
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
 </body>
