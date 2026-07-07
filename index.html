@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>SMAS-ліфтинг · Дашборд реклами</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+:root{--bg:#0f1420;--card:#1a2130;--card2:#212a3d;--txt:#e8ecf4;--mut:#8b96ab;--acc:#4f8cff;--good:#3ecf8e;--warn:#f5b942;--bad:#ff6b6b;--border:#2a3550}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans-serif;padding:20px;max-width:1200px;margin:0 auto}
+h1{font-size:1.5rem;margin-bottom:4px}
+.sub{color:var(--mut);font-size:.85rem;margin-bottom:20px}
+h2{font-size:1.1rem;margin:28px 0 12px;color:var(--acc)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px}
+.card h3{font-size:1rem;display:flex;justify-content:space-between;align-items:center}
+.city{font-size:.7rem;color:var(--mut);background:var(--card2);padding:2px 8px;border-radius:10px}
+.big{font-size:1.6rem;font-weight:700;margin:8px 0 2px}
+.big small{font-size:.75rem;color:var(--mut);font-weight:400}
+.row{display:flex;justify-content:space-between;font-size:.82rem;padding:3px 0;border-bottom:1px dashed var(--border)}
+.row:last-child{border:none}
+.row .l{color:var(--mut)}
+.chartbox{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+.chartbox h3{font-size:.95rem;margin-bottom:10px;color:var(--txt)}
+canvas{max-height:340px}
+table{width:100%;border-collapse:collapse;font-size:.82rem;background:var(--card);border-radius:12px;overflow:hidden}
+th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--border)}
+th:first-child,td:first-child{text-align:left}
+th{background:var(--card2);color:var(--mut);font-weight:600}
+tr:hover td{background:var(--card2)}
+.tag{padding:1px 7px;border-radius:8px;font-size:.72rem}
+.g{background:rgba(62,207,142,.15);color:var(--good)}
+.y{background:rgba(245,185,66,.15);color:var(--warn)}
+.r{background:rgba(255,107,107,.15);color:var(--bad)}
+.foot{color:var(--mut);font-size:.75rem;margin-top:24px;text-align:center}
+@media(max-width:600px){body{padding:10px}.big{font-size:1.3rem}}
+</style>
+</head>
+<body>
+<h1>📊 SMAS-ліфтинг · Париж і Прага</h1>
+<div class="sub" id="updated">Завантаження…</div>
+
+<h2>По менеджерах (весь період)</h2>
+<div class="cards" id="cards"></div>
+
+<h2>Динаміка</h2>
+<div class="chartbox"><h3>Ціна ліда (CPL) по днях, $</h3><canvas id="cplChart"></canvas></div>
+<div class="chartbox"><h3>Ліди по днях</h3><canvas id="leadsChart"></canvas></div>
+<div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
+
+<h2 id="crTitle">Креативи</h2>
+<div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
+<div style="overflow-x:auto"><table id="crTable">
+<thead><tr><th>Креатив · ед сет</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>Записи</th><th>CPA</th><th>Конв.</th></tr></thead>
+<tbody></tbody></table></div>
+
+<div class="foot" id="foot"></div>
+
+<script>
+const COLORS={'Диана':'#4f8cff','Таня':'#3ecf8e','Алиса':'#f5b942','Максим':'#ff6b6b','Даша':'#b47fff'};
+const fmt=(v,d=2)=>v==null?'—':'$'+Number(v).toFixed(d);
+const dd=s=>s.slice(8,10)+'.'+s.slice(5,7);
+Chart.defaults.color='#8b96ab';Chart.defaults.borderColor='#2a3550';
+
+fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
+  document.getElementById('updated').textContent='Оновлено: '+new Date(D.updated).toLocaleString('uk-UA')+' · '+D.periodNote;
+  document.getElementById('crTitle').textContent='Креативи ('+D.creativesPeriod+')';
+  const cards=document.getElementById('cards');
+  for(const [name,m] of Object.entries(D.managers)){
+    const conv=m.conv==null?'—':m.conv+'%';
+    cards.insertAdjacentHTML('beforeend',`<div class="card">
+      <h3>${name} <span class="city">${m.city}</span></h3>
+      <div class="big">${fmt(m.avgCpl)} <small>за ліда</small></div>
+      <div class="row"><span class="l">Витрати</span><b>${fmt(m.totalSpend)}</b></div>
+      <div class="row"><span class="l">Ліди</span><b>${m.totalLeads}</b></div>
+      <div class="row"><span class="l">Записи</span><b>${m.bookings}</b></div>
+      <div class="row"><span class="l">CPA (запис)</span><b>${fmt(m.cpa)}</b></div>
+      <div class="row"><span class="l">Конверсія</span><b>${conv}</b></div>
+      ${m.instSpend?`<div class="row"><span class="l">+ Instagram (Direct)</span><b>${fmt(m.instSpend)}</b></div>`:''}
+      <div class="row"><span class="l">З</span><b>${dd(m.start)}</b></div>
+    </div>`);
+  }
+  const allDates=[...new Set(Object.values(D.managers).flatMap(m=>m.dates))].sort();
+  const mkDs=key=>Object.entries(D.managers).map(([n,m])=>({label:n,data:allDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:m[key][i]}),borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
+  new Chart(cplChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('cpl')},options:{interaction:{mode:'index',intersect:false}}});
+  new Chart(leadsChart,{type:'bar',data:{labels:allDates.map(dd),datasets:mkDs('leads')},options:{scales:{x:{stacked:true},y:{stacked:true}}}});
+  new Chart(spendChart,{type:'bar',data:{labels:allDates.map(dd),datasets:mkDs('spend')},options:{scales:{x:{stacked:true},y:{stacked:true}}}});
+  const cr=[...D.creatives].sort((a,b)=>(a.cpa??1e9)-(b.cpa??1e9));
+  new Chart(cpaChart,{type:'bar',data:{labels:cr.map(c=>c.name+' · '+c.m),datasets:[{label:'CPA $',data:cr.map(c=>c.cpa),backgroundColor:cr.map(c=>COLORS[c.m])}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
+  const tb=document.querySelector('#crTable tbody');
+  for(const c of cr){
+    const cls=c.cpa==null?'r':(c.cpa<8?'g':c.cpa<15?'y':'r');
+    const st=c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого');
+    tb.insertAdjacentHTML('beforeend',`<tr><td>${c.name} · ${c.adset}</td><td>${c.m}</td><td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td><td>${c.book}</td><td>${fmt(c.cpa)} <span class="tag ${cls}">${st}</span></td><td>${c.conv==null?'—':c.conv+'%'}</td></tr>`);
+  }
+  document.getElementById('foot').textContent='Ліди таргетолога Ірини · CPA менеджерів рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads (Windsor) + Google-таблиця';
+}).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
+</script>
+</body>
+</html>
