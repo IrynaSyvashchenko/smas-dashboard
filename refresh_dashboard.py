@@ -11,7 +11,7 @@ the daily graphs. Runs in seconds so it always completes.
 Requires env var WINDSOR_API_KEY (stored as a GitHub Actions secret).
 Reads and writes ./data.json in the repo root.
 """
-import os, json, datetime, urllib.request, urllib.parse, sys
+import os, json, datetime, urllib.request, urllib.parse, urllib.error, sys
 
 API_KEY   = os.environ.get("WINDSOR_API_KEY", "").strip()
 CONNECTOR = "facebook"                 # Meta Ads (Facebook & Instagram)
@@ -43,15 +43,32 @@ def fetch_meta():
     if not API_KEY:
         sys.exit("ERROR: WINDSOR_API_KEY is not set")
     fields = "date,account_id,campaign,spend,actions_lead"
-    url = ("https://connectors.windsor.ai/%s?api_key=%s&date_from=%s&date_to=%s&fields=%s&force_refresh=true"
-           % (CONNECTOR, urllib.parse.quote(API_KEY), DATE_FROM, TODAY, fields))
-    req = urllib.request.Request(url, headers={"User-Agent": "smas-dashboard-refresh"})
-    with urllib.request.urlopen(req, timeout=180) as r:
-        payload = json.load(r)
-    rows = payload.get("data") or payload.get("result") or []
-    if not rows:
-        sys.exit("ERROR: Windsor returned no rows (check API key / connector / date range)")
-    return rows
+    last_err = None
+    for connector in (CONNECTOR, "all"):   # try Meta connector, then the blended 'all'
+        url = ("https://connectors.windsor.ai/%s?api_key=%s&date_from=%s&date_to=%s&fields=%s"
+               % (connector, urllib.parse.quote(API_KEY), DATE_FROM, TODAY, fields))
+        req = urllib.request.Request(url, headers={"User-Agent": "smas-dashboard-refresh"})
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                payload = json.load(r)
+            rows = payload.get("data") or payload.get("result") or []
+            if rows:
+                print("connector used:", connector, "| rows:", len(rows))
+                return rows
+            last_err = "connector '%s' returned 0 rows" % connector
+            print(last_err)
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", "replace")[:300]
+            except Exception:
+                pass
+            last_err = "HTTP %s on connector '%s': %s" % (e.code, connector, body)
+            print(last_err)
+        except Exception as e:
+            last_err = "error on connector '%s': %s" % (connector, e)
+            print(last_err)
+    sys.exit("ERROR fetching Windsor data -> " + str(last_err))
 
 def num(x):
     try:
