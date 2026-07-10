@@ -96,7 +96,7 @@ def is_booked(r):
     if dz not in ("", "0", "-", "—", "None"):
         return True
     for sf in STATUS_FIELDS:
-        if "запис" in str(r.get(sf) or "").lower():
+        if "запись" in str(r.get(sf) or "").lower():   # matches "Запись из звонка/WhatsApp"
             return True
     return False
 
