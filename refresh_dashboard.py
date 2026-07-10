@@ -101,12 +101,19 @@ def is_booked(r):
     return False
 
 def fetch_sheet_rows(gid):
+    # Windsor has NO account_id query param; select the tab via a filter on the account_id field.
     fields = urllib.parse.quote(",".join(SHEET_FIELDS), safe=",")
-    url = ("https://connectors.windsor.ai/googlesheets?api_key=%s&account_id=%s-%s&fields=%s"
-           % (urllib.parse.quote(API_KEY), SHEET_ID, gid, fields))
-    payload = http_json(url)
+    flt = urllib.parse.quote(json.dumps([["account_id", "eq", "%s-%s" % (SHEET_ID, gid)]]))
+    url = ("https://connectors.windsor.ai/googlesheets?api_key=%s&fields=%s&filter=%s"
+           % (urllib.parse.quote(API_KEY), fields, flt))
+    try:
+        payload = http_json(url)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try: body = e.read().decode("utf-8", "replace")[:300]
+        except Exception: pass
+        raise RuntimeError("HTTP %s: %s" % (e.code, body))
     rows = payload.get("data") or payload.get("result") or []
-    # client-side backstop in case the account_id param is ignored
     same = [r for r in rows if str(r.get("account_id", "")).endswith("-" + gid)]
     return same if same else rows
 
