@@ -131,7 +131,8 @@ def compute_bookings():
         for r in rows:
             seen[(str(r.get("phone_number")), str(r.get("created_time")))] = r
         booked = b7 = b1 = leads = 0
-        for r in seen.values():
+        old_keys = []                       # keys of booked leads created BEFORE today
+        for k, r in seen.items():
             t = str(r.get("таргетолог") or "").strip().lower()
             if not (("ирина" in t) or t == ""):
                 continue
@@ -141,11 +142,16 @@ def compute_bookings():
                 ct = str(r.get("created_time") or "")[:10]
                 try:
                     cd = datetime.date.fromisoformat(ct)
-                    if (today - cd).days < 7 and (today - cd).days >= 0: b7 += 1
-                    if cd == today: b1 += 1
+                    days = (today - cd).days
+                    if 0 <= days < 7: b7 += 1
+                    if cd == today:
+                        b1 += 1
+                    elif cd < today:
+                        old_keys.append("%s|%s" % (k[0], k[1]))
                 except Exception:
-                    pass
-        res[mgr] = {"bookings": booked, "bookings7d": b7, "bookings1d": b1, "leads_seen": leads}
+                    old_keys.append("%s|%s" % (k[0], k[1]))   # unknown date -> treat as old
+        res[mgr] = {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
+                    "leads_seen": leads, "old_keys": old_keys}
         print("  sheet %-6s gid %-11s rows %-5d uniq %-4d iryna %-4d | booked %d 7d %d 1d %d"
               % (mgr, gid, len(rows), len(seen), leads, booked, b7, b1))
     return res or None
@@ -198,13 +204,26 @@ def main():
     except Exception as e:
         print("BOOKINGS step failed entirely -> carrying over:", e); bk = None
     if bk:
+        # day-baseline snapshot kept inside data.json under "_baseline" (site ignores it).
+        # bookingsOld1d = booked-old leads that appeared since the first run of today.
+        baseline = cur.get("_baseline") or {}
+        base_same_day = (baseline.get("date") == TODAY)
+        base_old = baseline.get("old") or {}
+        new_base_old = dict(base_old)   # carry entries for managers we don't refresh this run
         for m, v in bk.items():
             if m in out["managers"] and v["leads_seen"] > 0:
                 node = out["managers"][m]
                 node["bookings"] = v["bookings"]
                 node["bookings7d"] = v["bookings7d"]
                 node["bookings1d"] = v["bookings1d"]
-                # bookingsOld1d carried (needs day-baseline snapshot)
+                old_now = set(v["old_keys"])
+                if base_same_day and (m in base_old):
+                    node["bookingsOld1d"] = len(old_now - set(base_old[m]))
+                    new_base_old[m] = base_old[m]          # keep the morning baseline unchanged
+                else:
+                    node["bookingsOld1d"] = 0              # first snapshot of the day for this mgr
+                    new_base_old[m] = sorted(old_now)
+        out["_baseline"] = {"date": TODAY, "old": new_base_old}
 
     # recompute cpa/conv from (possibly updated) bookings + fresh spend/leads
     for m, node in out["managers"].items():
