@@ -24,10 +24,11 @@ TZ        = datetime.timezone(datetime.timedelta(hours=2))
 LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Alissa",
            "Саида": "Saida", "Даша": "Dasha"}
 
-# Google Sheet: manager tabs available in Windsor (Даша's manager tab is NOT connected -> carried)
+# Google Sheet manager tabs. Даша (1406387900) works once her tab is connected in Windsor;
+# until then her filtered fetch returns 0 rows and her bookings are safely carried over.
 SHEET_ID = "1sOFTQ3NTeEEFrDbUjdl3p7Jhlx-Fk7duQhk43Rikxx8"
 MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
-               "Алиса": "36427361", "Саида": "2065248461"}
+               "Алиса": "36427361", "Саида": "2065248461", "Даша": "1406387900"}
 STATUS_FIELDS = ["первый_звонок", "первое_сообщение", "второй_звонок", "второе_сообщение",
                  "третий_звонок", "третье_сообщение", "третье_сообщение_",
                  "написал_на_whatsapp", "написал_на_whatsapp_1", "написал_на_whatsapp_2", "lead_status"]
