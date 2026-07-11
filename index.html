@@ -229,8 +229,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       <td>${noBk?'—*':c.book}</td>
       <td>${noBk?'—*':`${fmt(c.cpa)} <span class="tag ${cls}">${st}</span>`}</td></tr>`);
   }
-  if(cr.some(c=>c.book==null)) document.getElementById('crNote').textContent=
-    '* CPA по креативах поки рахується тільки для Диани — сирі вкладки решти менеджерів не синхронізовані у Windsor.';
+  if(cr.some(c=>c.book==null)){
+    const miss=[...new Set(cr.filter(c=>c.book==null).map(c=>c.m))].join(', ');
+    document.getElementById('crNote').textContent=
+      `* Записи/CPA по креативах ще недоступні для: ${miss} — їхні сирі вкладки Windsor поки не синхронізував. Підтягнеться саме.`;
+  }
   document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало)<br>'+
     'Воронка ліда: <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
