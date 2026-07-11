@@ -250,8 +250,18 @@ def compute_bookings():
     return res or None
 
 # ---------------- META: метрики по періодах + свіжі креативи ----------------
-# сирі вкладки, які Windsor реально читає (решта не синхронізовані -> CPA креативу = null)
-RAW_GID = {"Диана": "1148517845"}
+# Сирі вкладки (лід -> креатив по телефону). Якщо котрась ще не синхронізована у Windsor,
+# вона тихо пропускається, а CPA тих креативів = null. Щойно Windsor її підтягне —
+# зазапрацює саме, без зміни коду.
+RAW_GID = {
+    "Диана": "1148517845",   # 21.06.26_Praha_leads_Diana_model
+    "Саида": "1993887386",   # fb.
+    "Алиса": "448806878",    # fb2
+    "Таня":  "651975206",    # fb3
+    "Даша":  "871924069",    # fb4
+}
+# у частини рядків Meta не віддала назву оголошення через права доступу
+BROKEN_AD = "не хватает разрешений"
 
 def period_metrics(periods):
     """periods = {key:(dfrom,dto)} -> {manager:{key:{ctr,cpm,freq,...}}}
@@ -289,14 +299,21 @@ def build_creatives(d7from, yest_s, bk):
             active.add((r.get("campaign"), r.get("adset_name"), r.get("ad_name")))
 
     raw_map = {}   # phone9 -> (manager, ad_name)  із сирих вкладок
+    raw_ok = []
     for mgr, gid in RAW_GID.items():
         try:
+            n = 0
             for r in windsor("googlesheets", ["account_id", "phone_number", "ad_name"],
                              flt=[["account_id", "eq", "%s-%s" % (SHEET_ID, gid)]]):
-                ph = phone9(r.get("phone_number"))
-                if ph: raw_map[ph] = (mgr, r.get("ad_name"))
+                ph = phone9(r.get("phone_number")); ad = str(r.get("ad_name") or "")
+                if not ph or not ad or BROKEN_AD in ad:
+                    continue                      # немає прав на назву оголошення -> пропускаємо
+                raw_map[ph] = (mgr, ad); n += 1
+            if n:
+                raw_ok.append(mgr)
         except Exception as e:
-            print("  raw sheet FAIL", mgr, "->", e)
+            print("  raw sheet ще не синхронізована:", mgr, "->", str(e)[:80])
+    print("  сирі вкладки працюють для:", ", ".join(raw_ok) if raw_ok else "нікого")
 
     agg = {}
     for r in ads:
@@ -316,7 +333,7 @@ def build_creatives(d7from, yest_s, bk):
         m = a["m"]; sp = round(a["spend"], 2); ld = a["leads"]
         rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
         book = None
-        if m in RAW_GID and bk and m in bk:
+        if m in raw_ok and bk and m in bk:
             book = 0
             for ph in bk[m].get("booked7d_phones", []):
                 hit = raw_map.get(ph)
