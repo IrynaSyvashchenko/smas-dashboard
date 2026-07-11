@@ -67,6 +67,13 @@ tr:hover td{background:var(--card2)}
 <div class="chartbox"><h3>Ліди по днях</h3><canvas id="leadsChart"></canvas></div>
 <div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
 
+<h2>Ад-сети (аудиторія · гео)</h2>
+<div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно.</div>
+<div style="overflow-x:auto"><table id="asTable">
+<thead><tr><th>Ад-сет · кампанія</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Нецільові</th><th>Без реакції</th><th>Записи</th><th>CPA</th></tr></thead>
+<tbody></tbody></table></div>
+<div class="phint" id="asNote"></div>
+
 <h2 id="crTitle">Креативи</h2>
 <div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
 <div style="overflow-x:auto"><table id="crTable">
@@ -167,6 +174,20 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         if(bd>=.2) A.push(['warn',`<b>${name}</b>: <b>${Math.round(bd*100)}%</b> нецільових (не з міста / сміттєвий номер) — перевір гео і радіус в ад-сетах.`]);
       }
     }
+    // ад-сети: тут ловиться таргетинг (гео/радіус) — те, що не видно на рівні креативу
+    for(const a of (D.adsets||[])){
+      const q=a.q;
+      if(q&&q.leads>=5){
+        const bR=Math.round(q.bad/q.leads*100);
+        if(bR>=20) A.push(['bad',`Ад-сет <b>${a.adset}</b> (${a.m}): <b>${bR}%</b> нецільових лідів — перевір гео/радіус саме в цьому ад-сеті.`]);
+        const nR=Math.round(q.noresp/q.leads*100);
+        if(nR>=50) A.push(['warn',`Ад-сет <b>${a.adset}</b> (${a.m}): <b>${nR}%</b> лідів не відповідають — аудиторія холодна.`]);
+      }
+      if(a.freq!=null&&a.freq>=2.5)
+        A.push(['bad',`Ад-сет <b>${a.adset}</b> (${a.m}): частота <b>${a.freq}</b> — аудиторія вузька, вигорає.`]);
+      if(a.spend>=5&&a.leads===0)
+        A.push(['bad',`Ад-сет <b>${a.adset}</b> (${a.m}): витрачено <b>${fmt(a.spend)}</b>, <b>0 лідів</b>.`]);
+    }
     for(const c of (D.creatives||[])){
       if(c.freq!=null&&c.freq>=2.5)
         A.push(['bad',`Креатив <b>${c.name}</b> · ${c.adset} (${c.m}): частота <b>${c.freq}</b> — вигорів.`]);
@@ -211,6 +232,29 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   new Chart(cplChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('cpl')},options:{interaction:{mode:'index',intersect:false}}});
   new Chart(leadsChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('leads')},options:{interaction:{mode:'index',intersect:false}}});
   new Chart(spendChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
+
+  // ---- ад-сети ----
+  const AS=D.adsets||[];
+  const asb=document.querySelector('#asTable tbody');
+  const pct=(n,d)=>d?Math.round(n/d*100):null;
+  for(const a of AS){
+    const q=a.q, fcls=a.freq==null?'':(a.freq>=2.5?'r':a.freq>=1.8?'y':'g');
+    const bR=q?pct(q.bad,q.leads):null, nR=q?pct(q.noresp,q.leads):null;
+    const bcls=bR==null?'':(bR>=20?'r':bR>=10?'y':'g');
+    const ncls=nR==null?'':(nR>=40?'r':nR>=25?'y':'g');
+    asb.insertAdjacentHTML('beforeend',`<tr>
+      <td>${a.adset}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
+      <td>${a.m}</td><td>${fmt(a.spend)}</td><td>${a.leads}</td><td>${fmt(a.cpl)}</td>
+      <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
+      <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
+      <td>${bR==null?'—*':`<span class="tag ${bcls}">${q.bad} · ${bR}%</span>`}</td>
+      <td>${nR==null?'—*':`<span class="tag ${ncls}">${q.noresp} · ${nR}%</span>`}</td>
+      <td>${a.book==null?'—*':a.book}</td>
+      <td>${a.book==null?'—*':fmt(a.cpa)}</td></tr>`);
+  }
+  const asMiss=[...new Set(AS.filter(a=>!a.q).map(a=>a.m))];
+  if(asMiss.length) document.getElementById('asNote').textContent=
+    `* Якість і записи по ад-сетах поки недоступні для: ${asMiss.join(', ')} — їхні сирі вкладки Windsor ще не синхронізував. Підтягнеться саме.`;
 
   // ---- креативи ----
   const cr=[...D.creatives].sort((a,b)=>(a.cpa??1e9)-(b.cpa??1e9));
