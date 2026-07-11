@@ -102,20 +102,33 @@ def is_booked(r):
     return False
 
 # --- lead quality ------------------------------------------------------------
-# БРАК ТРАФІКУ = вина реклами (не те місто / сміттєвий номер / дубль)
+# Воронка ліда: НЕЦІЛЬОВИЙ -> БЕЗ РЕАКЦІЇ -> ЛІКВІД (вийшов на контакт) -> ЗАПИС
+#
+# НЕЦІЛЬОВІ  = не те місто / сміттєвий номер / дубль  -> проблема ТАРГЕТИНГУ (гео, аудиторія)
+# БЕЗ РЕАКЦІЇ = людина лишила номер, але не прочитала / не взяла слухавку / ігнорує
+#               -> це НЕ вина менеджера, це якість трафіку: креатив/офер тягне незацікавлених
+# ЛІКВІД      = все інше (діалог, думає, відмова, запис) — людина реально відреагувала
 BAD_KW    = ["не из париж", "не из праг", "не з париж", "не з праг", "не из город",
              "номер не существует", "нет ватсап", "нет whatsapp", "повтор номера"]
-# НЕ ОБРОБЛЕНО = вина менеджера (лід просто не взяли в роботу)
-UNPROC_KW = ["не прочитано"]
+NORESP_KW = ["не прочитано", "игнор", "не взял", "не отвеч", "не отв",
+             "не вышел в диалог", "не вышла в диалог"]
 
 def _statuses(r):
     return " | ".join(str(r.get(sf) or "") for sf in STATUS_FIELDS).lower()
 
+def _last_status(r):
+    """Останній непорожній статус = поточний стан ліда."""
+    vals = [str(r.get(sf) or "").strip() for sf in STATUS_FIELDS]
+    vals = [v for v in vals if v and v not in ("0", "-", "—")]
+    return vals[-1].lower() if vals else ""
+
 def is_bad(r):
+    # нецільовий — це термінальна позначка, шукаємо в будь-якому статусі
     s = _statuses(r); return any(k in s for k in BAD_KW)
 
-def is_unproc(r):
-    s = _statuses(r); return any(k in s for k in UNPROC_KW)
+def is_noresp(r):
+    # без реакції — дивимось ПОТОЧНИЙ стан (останній статус), бо менеджер міг дотиснути пізніше
+    s = _last_status(r); return any(k in s for k in NORESP_KW)
 
 def fetch_sheet_rows(gid):
     # Windsor has NO account_id query param; select the tab via a filter on the account_id field.
@@ -151,8 +164,8 @@ def compute_bookings():
         booked = b7 = b1 = leads = 0
         bY = bM = 0                         # bookings among leads created yesterday / this month
         old_keys = []                       # keys of booked leads created BEFORE today
-        # lead quality per period: leads / bad-traffic / unprocessed
-        Q = {p: {"leads": 0, "bad": 0, "unproc": 0} for p in ("yest", "d7", "month", "all")}
+        # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
+        Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "all")}
 
         for k, r in seen.items():
             t = str(r.get("таргетолог") or "").strip().lower()
@@ -167,7 +180,7 @@ def compute_bookings():
 
             bk = is_booked(r)
             bd = (not bk) and is_bad(r)
-            up = (not bk) and (not bd) and is_unproc(r)
+            nr = (not bk) and (not bd) and is_noresp(r)
 
             buckets = ["all"]
             if cd:
@@ -177,7 +190,7 @@ def compute_bookings():
             for p in buckets:
                 Q[p]["leads"] += 1
                 if bd: Q[p]["bad"] += 1
-                if up: Q[p]["unproc"] += 1
+                if nr: Q[p]["noresp"] += 1
 
             if bk:
                 booked += 1
@@ -195,11 +208,13 @@ def compute_bookings():
         res[mgr] = {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
                     "bookingsYest": bY, "bookingsMonth": bM,
                     "leads_seen": leads, "old_keys": old_keys, "q": Q}
-        qa = Q["all"]
-        print("  sheet %-6s iryna %-4d | booked %-3d 7d %-3d yest %-2d | БРАК %d (%.0f%%)  не оброблено %d (%.0f%%)"
+        qa = Q["all"]; ql = qa["leads"] or 1
+        liq = qa["leads"] - qa["bad"] - qa["noresp"]
+        print("  sheet %-6s iryna %-4d | booked %-3d 7d %-3d yest %-2d | нецільові %d (%.0f%%)  без реакції %d (%.0f%%)  ліквід %d (%.0f%%)"
               % (mgr, leads, booked, b7, bY,
-                 qa["bad"],    100.0 * qa["bad"]    / qa["leads"] if qa["leads"] else 0,
-                 qa["unproc"], 100.0 * qa["unproc"] / qa["leads"] if qa["leads"] else 0))
+                 qa["bad"],    100.0 * qa["bad"]    / ql,
+                 qa["noresp"], 100.0 * qa["noresp"] / ql,
+                 liq,          100.0 * liq          / ql))
     return res or None
 
 # ---------------- MAIN ----------------
