@@ -101,19 +101,31 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
 
   // ---- періоди ----
   const P={
-    yest:{label:'Вчора',hint:`Повний закритий день — ${dd(yest)}. Найчесніші цифри для рішень.`,
+    yest:{label:'Вчора',qk:'yest',hint:`Повний закритий день — ${dd(yest)}. Найчесніші цифри для рішень.`,
           pred:d=>d===yest, bk:m=>m.bookingsYest??0,
           extra:m=>`<div class="row"><span class="l">Дата</span><b>${dd(yest)}</b></div>`},
-    d7:{label:'7 днів',hint:`${dd(d7from)} – ${dd(today)} (включно з неповним сьогодні).`,
+    d7:{label:'7 днів',qk:'d7',hint:`${dd(d7from)} – ${dd(today)} (включно з неповним сьогодні).`,
           pred:d=>d>=d7from, bk:m=>m.bookings7d??0,
           extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d7from).length}</b></div>`},
-    month:{label:monthName,hint:`Календарний місяць — те, що йде у звіт для керівництва.`,
+    month:{label:monthName,qk:'month',hint:`Календарний місяць — те, що йде у звіт для керівництва.`,
           pred:d=>d.startsWith(monthPref), bk:m=>m.bookingsMonth??0,
           extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(monthPref)).length}</b></div>`},
-    all:{label:'Весь час',hint:`Від старту кожного менеджера. Періоди різні — порівнювати менеджерів між собою тут не можна.`,
+    all:{label:'Весь час',qk:'all',hint:`Від старту кожного менеджера. Періоди різні — порівнювати менеджерів між собою тут не можна.`,
           pred:d=>true, bk:m=>m.bookings??0,
           extra:m=>(m.instSpend?`<div class="row"><span class="l">+ Instagram (Direct)</span><b>${fmt(m.instSpend)}</b></div>`:'')+
                    `<div class="row"><span class="l">З</span><b>${dd(m.start)}</b></div>`}
+  };
+
+  // блок якості лідів у картці: брак трафіку (вина реклами) vs не оброблено (вина менеджера)
+  const qualityRows=(m,p,sp,ld)=>{
+    const q=m.q&&m.q[p.qk];
+    if(!q||!q.leads) return '';
+    const badR=q.bad/q.leads, upR=q.unproc/q.leads;
+    const clean=ld?sp/Math.max(ld*(1-badR),0.0001):null;
+    const cls=r=>r>=.2?'r':r>=.1?'y':'g';
+    return `<div class="row"><span class="l">Брак трафіку</span><b><span class="tag ${cls(badR)}">${q.bad} · ${Math.round(badR*100)}%</span></b></div>
+            <div class="row"><span class="l">Не оброблено</span><b><span class="tag ${upR>=.3?'r':upR>=.15?'y':'g'}">${q.unproc} · ${Math.round(upR*100)}%</span></b></div>
+            <div class="row"><span class="l">Чистий CPL</span><b>${fmt(clean)}</b></div>`;
   };
 
   const tabsEl=document.getElementById('tabs');
@@ -142,6 +154,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <div class="row"><span class="l">Записи</span><b>${bk}</b></div>
         <div class="row"><span class="l">CPA (запис)</span><b>${fmt(cpa)}</b></div>
         <div class="row"><span class="l">Конверсія</span><b>${conv}</b></div>
+        ${qualityRows(m,p,sp,ld)}
         ${p.extra(m)}
       </div>`);
     }
@@ -163,7 +176,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const st=c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого');
     tb.insertAdjacentHTML('beforeend',`<tr><td>${c.name} · ${c.adset}</td><td>${c.m}</td><td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td><td>${c.book}</td><td>${fmt(c.cpa)} <span class="tag ${cls}">${st}</span></td><td>${c.conv==null?'—':c.conv+'%'}</td></tr>`);
   }
-  document.getElementById('foot').textContent='Ліди таргетолога Ірини · Записи в кожному періоді = записи серед лідів, СТВОРЕНИХ у цьому періоді · CPA рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads (Windsor) + Google-таблиця';
+  document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало)<br>'+
+    '<b>Брак трафіку</b> = не з міста + номер не існує + нема WhatsApp + повтор номера → це вина реклами. '+
+    '<b>Не оброблено</b> = «не прочитано» → це вина менеджера, не реклами. '+
+    '<b>Чистий CPL</b> = витрати / ліди без браку — реальна ціна цільового ліда.<br>'+
+    'CPA рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads (Windsor) + Google-таблиця';
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
 </body>
