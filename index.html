@@ -116,16 +116,18 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
                    `<div class="row"><span class="l">З</span><b>${dd(m.start)}</b></div>`}
   };
 
-  // блок якості лідів у картці: брак трафіку (вина реклами) vs не оброблено (вина менеджера)
+  // якість трафіку: нецільові (гео/сміття) · без реакції (людина не відповіла) · ліквід (вийшли на контакт)
   const qualityRows=(m,p,sp,ld)=>{
     const q=m.q&&m.q[p.qk];
     if(!q||!q.leads) return '';
-    const badR=q.bad/q.leads, upR=q.unproc/q.leads;
-    const clean=ld?sp/Math.max(ld*(1-badR),0.0001):null;
+    const liq=Math.max(q.leads-q.bad-(q.noresp||0),0);
+    const badR=q.bad/q.leads, nrR=(q.noresp||0)/q.leads, liqR=liq/q.leads;
+    const cplLiq=(ld&&liqR>0)?sp/(ld*liqR):null;   // ціна ліда, який реально вийшов на контакт
     const cls=r=>r>=.2?'r':r>=.1?'y':'g';
-    return `<div class="row"><span class="l">Брак трафіку</span><b><span class="tag ${cls(badR)}">${q.bad} · ${Math.round(badR*100)}%</span></b></div>
-            <div class="row"><span class="l">Не оброблено</span><b><span class="tag ${upR>=.3?'r':upR>=.15?'y':'g'}">${q.unproc} · ${Math.round(upR*100)}%</span></b></div>
-            <div class="row"><span class="l">Чистий CPL</span><b>${fmt(clean)}</b></div>`;
+    return `<div class="row"><span class="l">Нецільові (гео/сміття)</span><b><span class="tag ${cls(badR)}">${q.bad} · ${Math.round(badR*100)}%</span></b></div>
+            <div class="row"><span class="l">Без реакції</span><b><span class="tag ${nrR>=.4?'r':nrR>=.25?'y':'g'}">${q.noresp||0} · ${Math.round(nrR*100)}%</span></b></div>
+            <div class="row"><span class="l">Ліквід (на контакті)</span><b><span class="tag ${liqR>=.5?'g':liqR>=.3?'y':'r'}">${liq} · ${Math.round(liqR*100)}%</span></b></div>
+            <div class="row"><span class="l">CPL ліквіда</span><b>${fmt(cplLiq)}</b></div>`;
   };
 
   const tabsEl=document.getElementById('tabs');
@@ -177,9 +179,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     tb.insertAdjacentHTML('beforeend',`<tr><td>${c.name} · ${c.adset}</td><td>${c.m}</td><td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td><td>${c.book}</td><td>${fmt(c.cpa)} <span class="tag ${cls}">${st}</span></td><td>${c.conv==null?'—':c.conv+'%'}</td></tr>`);
   }
   document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало)<br>'+
-    '<b>Брак трафіку</b> = не з міста + номер не існує + нема WhatsApp + повтор номера → це вина реклами. '+
-    '<b>Не оброблено</b> = «не прочитано» → це вина менеджера, не реклами. '+
-    '<b>Чистий CPL</b> = витрати / ліди без браку — реальна ціна цільового ліда.<br>'+
+    'Воронка ліда: <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль) → проблема <b>таргетингу</b>. '+
+    '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
+    '<b>Ліквід</b> = реально вийшли на контакт. <b>CPL ліквіда</b> = скільки коштує лід, який справді відповів.<br>'+
     'CPA рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads (Windsor) + Google-таблиця';
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
