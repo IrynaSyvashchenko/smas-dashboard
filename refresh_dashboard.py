@@ -130,7 +130,10 @@ def compute_bookings():
         seen = {}
         for r in rows:
             seen[(str(r.get("phone_number")), str(r.get("created_time")))] = r
+        yest = today - datetime.timedelta(days=1)
+        month_start = today.replace(day=1)
         booked = b7 = b1 = leads = 0
+        bY = bM = 0                         # bookings among leads created yesterday / this month
         old_keys = []                       # keys of booked leads created BEFORE today
         for k, r in seen.items():
             t = str(r.get("таргетолог") or "").strip().lower()
@@ -144,6 +147,8 @@ def compute_bookings():
                     cd = datetime.date.fromisoformat(ct)
                     days = (today - cd).days
                     if 0 <= days < 7: b7 += 1
+                    if cd == yest: bY += 1
+                    if cd >= month_start: bM += 1
                     if cd == today:
                         b1 += 1
                     elif cd < today:
@@ -151,6 +156,7 @@ def compute_bookings():
                 except Exception:
                     old_keys.append("%s|%s" % (k[0], k[1]))   # unknown date -> treat as old
         res[mgr] = {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
+                    "bookingsYest": bY, "bookingsMonth": bM,
                     "leads_seen": leads, "old_keys": old_keys}
         print("  sheet %-6s gid %-11s rows %-5d uniq %-4d iryna %-4d | booked %d 7d %d 1d %d"
               % (mgr, gid, len(rows), len(seen), leads, booked, b7, b1))
@@ -216,6 +222,8 @@ def main():
                 node["bookings"] = v["bookings"]
                 node["bookings7d"] = v["bookings7d"]
                 node["bookings1d"] = v["bookings1d"]
+                node["bookingsYest"] = v["bookingsYest"]
+                node["bookingsMonth"] = v["bookingsMonth"]
                 old_now = set(v["old_keys"])
                 if base_same_day and (m in base_old):
                     node["bookingsOld1d"] = len(old_now - set(base_old[m]))
