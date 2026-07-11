@@ -101,6 +101,22 @@ def is_booked(r):
             return True
     return False
 
+# --- lead quality ------------------------------------------------------------
+# БРАК ТРАФІКУ = вина реклами (не те місто / сміттєвий номер / дубль)
+BAD_KW    = ["не из париж", "не из праг", "не з париж", "не з праг", "не из город",
+             "номер не существует", "нет ватсап", "нет whatsapp", "повтор номера"]
+# НЕ ОБРОБЛЕНО = вина менеджера (лід просто не взяли в роботу)
+UNPROC_KW = ["не прочитано"]
+
+def _statuses(r):
+    return " | ".join(str(r.get(sf) or "") for sf in STATUS_FIELDS).lower()
+
+def is_bad(r):
+    s = _statuses(r); return any(k in s for k in BAD_KW)
+
+def is_unproc(r):
+    s = _statuses(r); return any(k in s for k in UNPROC_KW)
+
 def fetch_sheet_rows(gid):
     # Windsor has NO account_id query param; select the tab via a filter on the account_id field.
     fields = urllib.parse.quote(",".join(SHEET_FIELDS), safe=",")
@@ -135,31 +151,55 @@ def compute_bookings():
         booked = b7 = b1 = leads = 0
         bY = bM = 0                         # bookings among leads created yesterday / this month
         old_keys = []                       # keys of booked leads created BEFORE today
+        # lead quality per period: leads / bad-traffic / unprocessed
+        Q = {p: {"leads": 0, "bad": 0, "unproc": 0} for p in ("yest", "d7", "month", "all")}
+
         for k, r in seen.items():
             t = str(r.get("таргетолог") or "").strip().lower()
             if not (("ирина" in t) or t == ""):
                 continue
             leads += 1
-            if is_booked(r):
+            ct = str(r.get("created_time") or "")[:10]
+            try:
+                cd = datetime.date.fromisoformat(ct)
+            except Exception:
+                cd = None
+
+            bk = is_booked(r)
+            bd = (not bk) and is_bad(r)
+            up = (not bk) and (not bd) and is_unproc(r)
+
+            buckets = ["all"]
+            if cd:
+                if cd == yest: buckets.append("yest")
+                if 0 <= (today - cd).days < 7: buckets.append("d7")
+                if cd >= month_start: buckets.append("month")
+            for p in buckets:
+                Q[p]["leads"] += 1
+                if bd: Q[p]["bad"] += 1
+                if up: Q[p]["unproc"] += 1
+
+            if bk:
                 booked += 1
-                ct = str(r.get("created_time") or "")[:10]
-                try:
-                    cd = datetime.date.fromisoformat(ct)
-                    days = (today - cd).days
-                    if 0 <= days < 7: b7 += 1
+                if cd:
+                    if 0 <= (today - cd).days < 7: b7 += 1
                     if cd == yest: bY += 1
                     if cd >= month_start: bM += 1
                     if cd == today:
                         b1 += 1
                     elif cd < today:
                         old_keys.append("%s|%s" % (k[0], k[1]))
-                except Exception:
+                else:
                     old_keys.append("%s|%s" % (k[0], k[1]))   # unknown date -> treat as old
+
         res[mgr] = {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
                     "bookingsYest": bY, "bookingsMonth": bM,
-                    "leads_seen": leads, "old_keys": old_keys}
-        print("  sheet %-6s gid %-11s rows %-5d uniq %-4d iryna %-4d | booked %d 7d %d 1d %d"
-              % (mgr, gid, len(rows), len(seen), leads, booked, b7, b1))
+                    "leads_seen": leads, "old_keys": old_keys, "q": Q}
+        qa = Q["all"]
+        print("  sheet %-6s iryna %-4d | booked %-3d 7d %-3d yest %-2d | БРАК %d (%.0f%%)  не оброблено %d (%.0f%%)"
+              % (mgr, leads, booked, b7, bY,
+                 qa["bad"],    100.0 * qa["bad"]    / qa["leads"] if qa["leads"] else 0,
+                 qa["unproc"], 100.0 * qa["unproc"] / qa["leads"] if qa["leads"] else 0))
     return res or None
 
 # ---------------- MAIN ----------------
@@ -224,6 +264,7 @@ def main():
                 node["bookings1d"] = v["bookings1d"]
                 node["bookingsYest"] = v["bookingsYest"]
                 node["bookingsMonth"] = v["bookingsMonth"]
+                node["q"] = v["q"]                      # lead quality per period
                 old_now = set(v["old_keys"])
                 if base_same_day and (m in base_old):
                     node["bookingsOld1d"] = len(old_now - set(base_old[m]))
