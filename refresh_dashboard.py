@@ -40,6 +40,33 @@ def http_json(url):
     with urllib.request.urlopen(req, timeout=180) as r:
         return json.load(r)
 
+def windsor(connector, fields, dfrom=None, dto=None, flt=None):
+    """Generic Windsor REST call."""
+    q = "api_key=%s&fields=%s" % (urllib.parse.quote(API_KEY),
+                                  urllib.parse.quote(",".join(fields), safe=","))
+    if dfrom: q += "&date_from=%s" % dfrom
+    if dto:   q += "&date_to=%s"   % dto
+    if flt:   q += "&filter=%s"    % urllib.parse.quote(json.dumps(flt))
+    payload = http_json("https://connectors.windsor.ai/%s?%s" % (connector, q))
+    return payload.get("data") or payload.get("result") or []
+
+def phone9(p):
+    d = "".join(c for c in str(p or "") if c.isdigit())
+    return d[-9:] if len(d) >= 9 else ""
+
+def acct_ok(r):
+    a = str(r.get("account_id", ""))
+    return (ACCOUNT in a) if a else True
+
+def rate_metrics(imp, clicks, spend, reach):
+    """CTR/CPM/частота рахуємо із сум — це коректно, на відміну від усереднення Meta."""
+    return {
+        "ctr":  round(clicks / imp * 100, 2) if imp else None,
+        "cpm":  round(spend / imp * 1000, 2) if imp else None,
+        "freq": round(imp / reach, 2)        if reach else None,
+        "impr": int(imp), "clicks": int(clicks),
+    }
+
 # ---------------- META ----------------
 def classify(campaign):
     c = campaign or ""
@@ -166,6 +193,7 @@ def compute_bookings():
         old_keys = []                       # keys of booked leads created BEFORE today
         # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
         Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "all")}
+        booked7d_phones = []   # телефони записаних лідів, створених за 7 днів (для CPA креативів)
 
         for k, r in seen.items():
             t = str(r.get("таргетолог") or "").strip().lower()
@@ -195,7 +223,10 @@ def compute_bookings():
             if bk:
                 booked += 1
                 if cd:
-                    if 0 <= (today - cd).days < 7: b7 += 1
+                    if 0 <= (today - cd).days < 7:
+                        b7 += 1
+                        ph = phone9(r.get("phone_number"))
+                        if ph: booked7d_phones.append(ph)
                     if cd == yest: bY += 1
                     if cd >= month_start: bM += 1
                     if cd == today:
@@ -207,7 +238,8 @@ def compute_bookings():
 
         res[mgr] = {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
                     "bookingsYest": bY, "bookingsMonth": bM,
-                    "leads_seen": leads, "old_keys": old_keys, "q": Q}
+                    "leads_seen": leads, "old_keys": old_keys, "q": Q,
+                    "booked7d_phones": booked7d_phones}
         qa = Q["all"]; ql = qa["leads"] or 1
         liq = qa["leads"] - qa["bad"] - qa["noresp"]
         print("  sheet %-6s iryna %-4d | booked %-3d 7d %-3d yest %-2d | нецільові %d (%.0f%%)  без реакції %d (%.0f%%)  ліквід %d (%.0f%%)"
@@ -216,6 +248,90 @@ def compute_bookings():
                  qa["noresp"], 100.0 * qa["noresp"] / ql,
                  liq,          100.0 * liq          / ql))
     return res or None
+
+# ---------------- META: метрики по періодах + свіжі креативи ----------------
+# сирі вкладки, які Windsor реально читає (решта не синхронізовані -> CPA креативу = null)
+RAW_GID = {"Диана": "1148517845"}
+
+def period_metrics(periods):
+    """periods = {key:(dfrom,dto)} -> {manager:{key:{ctr,cpm,freq,...}}}
+    Запит БЕЗ розбивки по днях — інакше frequency порахується неправильно."""
+    out = {}
+    for key, (dfrom, dto) in periods.items():
+        try:
+            rows = windsor("facebook",
+                           ["account_id", "campaign", "spend", "impressions", "clicks", "reach"],
+                           dfrom, dto)
+        except Exception as e:
+            print("  meta period FAIL", key, "->", e); continue
+        agg = {}
+        for r in rows:
+            if not acct_ok(r): continue
+            kind, m = classify(r.get("campaign"))
+            if kind != "lead" or m is None: continue
+            a = agg.setdefault(m, {"imp": 0.0, "clicks": 0.0, "spend": 0.0, "reach": 0.0})
+            a["imp"]    += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
+            a["spend"]  += num(r.get("spend"));       a["reach"]  += num(r.get("reach"))
+        for m, a in agg.items():
+            out.setdefault(m, {})[key] = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
+    return out
+
+def build_creatives(d7from, yest_s, bk):
+    """Свіжі креативи за 7 днів, тільки АКТИВНІ (витрати > 0 вчора/сьогодні)."""
+    ads = windsor("facebook",
+                  ["account_id", "campaign", "adset_name", "ad_name", "spend",
+                   "impressions", "clicks", "reach", "actions_lead"], d7from, TODAY)
+    recent = windsor("facebook",
+                     ["account_id", "campaign", "adset_name", "ad_name", "spend"], yest_s, TODAY)
+    active = set()
+    for r in recent:
+        if acct_ok(r) and num(r.get("spend")) > 0:
+            active.add((r.get("campaign"), r.get("adset_name"), r.get("ad_name")))
+
+    raw_map = {}   # phone9 -> (manager, ad_name)  із сирих вкладок
+    for mgr, gid in RAW_GID.items():
+        try:
+            for r in windsor("googlesheets", ["account_id", "phone_number", "ad_name"],
+                             flt=[["account_id", "eq", "%s-%s" % (SHEET_ID, gid)]]):
+                ph = phone9(r.get("phone_number"))
+                if ph: raw_map[ph] = (mgr, r.get("ad_name"))
+        except Exception as e:
+            print("  raw sheet FAIL", mgr, "->", e)
+
+    agg = {}
+    for r in ads:
+        if not acct_ok(r): continue
+        kind, m = classify(r.get("campaign"))
+        if kind != "lead" or m is None: continue
+        key = (r.get("campaign"), r.get("adset_name"), r.get("ad_name"))
+        if key not in active: continue
+        a = agg.setdefault(key, {"m": m, "spend": 0.0, "leads": 0,
+                                 "imp": 0.0, "clicks": 0.0, "reach": 0.0})
+        a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
+        a["imp"]   += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
+        a["reach"] += num(r.get("reach"))
+
+    out = []
+    for (camp, adset, ad), a in agg.items():
+        m = a["m"]; sp = round(a["spend"], 2); ld = a["leads"]
+        rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
+        book = None
+        if m in RAW_GID and bk and m in bk:
+            book = 0
+            for ph in bk[m].get("booked7d_phones", []):
+                hit = raw_map.get(ph)
+                if hit and hit[0] == m and hit[1] == ad:
+                    book += 1
+        out.append({"m": m, "name": ad, "adset": adset, "campaign": camp,
+                    "spend": sp, "leads": ld,
+                    "cpl":  round(sp / ld, 2) if ld else None,
+                    "book": book,
+                    "cpa":  round(sp / book, 2) if book else None,
+                    "conv": round(book / ld * 100, 1) if (book is not None and ld) else None,
+                    "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"]})
+    out.sort(key=lambda c: (c["cpa"] if c["cpa"] is not None else 1e9))
+    print("  creatives: %d активних" % len(out))
+    return out
 
 # ---------------- MAIN ----------------
 def main():
@@ -288,6 +404,28 @@ def main():
                     node["bookingsOld1d"] = 0              # first snapshot of the day for this mgr
                     new_base_old[m] = sorted(old_now)
         out["_baseline"] = {"date": TODAY, "old": new_base_old}
+
+    # --- Meta-метрики по періодах (CTR / CPM / частота) + свіжі креативи ---
+    td = datetime.date.fromisoformat(TODAY)
+    yest_s = (td - datetime.timedelta(days=1)).isoformat()
+    d7from = (td - datetime.timedelta(days=6)).isoformat()
+    mstart = td.replace(day=1).isoformat()
+    try:
+        pm = period_metrics({"yest": (yest_s, yest_s), "d7": (d7from, TODAY),
+                             "month": (mstart, TODAY), "all": (DATE_FROM, TODAY)})
+        for m, node in out["managers"].items():
+            if m in pm:
+                node["m"] = pm[m]
+    except Exception as e:
+        print("period metrics failed -> skipping:", e)
+
+    try:
+        cr = build_creatives(d7from, yest_s, bk)
+        if cr:
+            out["creatives"] = cr
+            out["creativesPeriod"] = "останні 7 днів, тільки активні"
+    except Exception as e:
+        print("creatives failed -> carrying over old ones:", e)
 
     # recompute cpa/conv from (possibly updated) bookings + fresh spend/leads
     for m, node in out["managers"].items():
