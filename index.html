@@ -41,6 +41,9 @@ tr:hover td{background:var(--card2)}
 .g{background:rgba(62,207,142,.15);color:var(--good)}
 .y{background:rgba(245,185,66,.15);color:var(--warn)}
 .r{background:rgba(255,107,107,.15);color:var(--bad)}
+.alert{background:var(--card);border:1px solid var(--border);border-left:3px solid var(--bad);border-radius:10px;padding:9px 13px;margin-bottom:7px;font-size:.85rem}
+.alert.warn{border-left-color:var(--warn)}
+.alert.ok{border-left-color:var(--good);color:var(--mut)}
 .foot{color:var(--mut);font-size:.75rem;margin-top:24px;text-align:center}
 @media(max-width:600px){body{padding:10px}.big{font-size:1.3rem}}
 </style>
@@ -50,6 +53,9 @@ tr:hover td{background:var(--card2)}
 <div class="sub" id="updated">Завантаження…</div>
 
 <div class="today" id="todayStrip"></div>
+
+<h2>⚠️ Алерти</h2>
+<div id="alerts"></div>
 
 <h2>По менеджерах</h2>
 <div class="tabs" id="tabs"></div>
@@ -64,8 +70,9 @@ tr:hover td{background:var(--card2)}
 <h2 id="crTitle">Креативи</h2>
 <div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
 <div style="overflow-x:auto"><table id="crTable">
-<thead><tr><th>Креатив · ед сет</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>Записи</th><th>CPA</th><th>Конв.</th></tr></thead>
+<thead><tr><th>Креатив · ед сет</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th></tr></thead>
 <tbody></tbody></table></div>
+<div class="phint" id="crNote"></div>
 
 <div class="foot" id="foot"></div>
 
@@ -138,9 +145,44 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     tabsEl.appendChild(b);
   });
 
+  // метрики Meta: CTR / CPM / частота (частота >2.5 = вигорання)
+  const metaRows=(m,p)=>{
+    const x=m.m&&m.m[p.qk];
+    if(!x) return '';
+    const f=x.freq, fcls=f==null?'g':(f>=2.5?'r':f>=1.8?'y':'g');
+    return `<div class="row"><span class="l">CTR</span><b>${x.ctr!=null?x.ctr+'%':'—'}</b></div>
+            <div class="row"><span class="l">CPM</span><b>${fmt(x.cpm)}</b></div>
+            <div class="row"><span class="l">Частота</span><b><span class="tag ${fcls}">${f??'—'}</span></b></div>`;
+  };
+
+  function buildAlerts(k){
+    const A=[];
+    for(const [name,m] of Object.entries(M)){
+      const x=m.m&&m.m[k], q=m.q&&m.q[k];
+      if(x&&x.freq!=null&&x.freq>=2.5)
+        A.push(['bad',`<b>${name}</b>: частота <b>${x.freq}</b> — аудиторія бачить рекламу забагато разів, креативи вигорають. Онови креатив або розшир аудиторію.`]);
+      if(q&&q.leads>=10){
+        const nr=(q.noresp||0)/q.leads, bd=q.bad/q.leads;
+        if(nr>=.5) A.push(['bad',`<b>${name}</b>: <b>${Math.round(nr*100)}%</b> лідів взагалі не відповідають — креатив/офер тягне незацікавлених. Це не менеджер.`]);
+        if(bd>=.2) A.push(['warn',`<b>${name}</b>: <b>${Math.round(bd*100)}%</b> нецільових (не з міста / сміттєвий номер) — перевір гео і радіус в ад-сетах.`]);
+      }
+    }
+    for(const c of (D.creatives||[])){
+      if(c.freq!=null&&c.freq>=2.5)
+        A.push(['bad',`Креатив <b>${c.name}</b> · ${c.adset} (${c.m}): частота <b>${c.freq}</b> — вигорів.`]);
+      if(c.spend>=5&&c.leads===0)
+        A.push(['bad',`Креатив <b>${c.name}</b> (${c.m}): витрачено <b>${fmt(c.spend)}</b>, <b>0 лідів</b> — вимикай.`]);
+    }
+    const el=document.getElementById('alerts');
+    el.innerHTML = A.length
+      ? A.map(([t,txt])=>`<div class="alert ${t==='warn'?'warn':''}">${txt}</div>`).join('')
+      : `<div class="alert ok">✅ Критичних проблем немає: частота в нормі, креативів без лідів немає.</div>`;
+  }
+
   function render(k){
     const p=P[k], el=document.getElementById('cards');
     document.getElementById('phint').textContent=p.hint;
+    buildAlerts(k);
     el.innerHTML='';
     for(const [name,m] of Object.entries(M)){
       let sp=0,ld=0;
@@ -157,6 +199,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <div class="row"><span class="l">CPA (запис)</span><b>${fmt(cpa)}</b></div>
         <div class="row"><span class="l">Конверсія</span><b>${conv}</b></div>
         ${qualityRows(m,p,sp,ld)}
+        ${metaRows(m,p)}
         ${p.extra(m)}
       </div>`);
     }
@@ -174,10 +217,20 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   new Chart(cpaChart,{type:'bar',data:{labels:cr.map(c=>c.name+' · '+c.m),datasets:[{label:'CPA $',data:cr.map(c=>c.cpa),backgroundColor:cr.map(c=>COLORS[c.m])}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
   const tb=document.querySelector('#crTable tbody');
   for(const c of cr){
-    const cls=c.cpa==null?'r':(c.cpa<8?'g':c.cpa<15?'y':'r');
-    const st=c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого');
-    tb.insertAdjacentHTML('beforeend',`<tr><td>${c.name} · ${c.adset}</td><td>${c.m}</td><td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td><td>${c.book}</td><td>${fmt(c.cpa)} <span class="tag ${cls}">${st}</span></td><td>${c.conv==null?'—':c.conv+'%'}</td></tr>`);
+    const noBk=(c.book==null);
+    const cls=noBk?'':(c.cpa==null?'r':(c.cpa<8?'g':c.cpa<15?'y':'r'));
+    const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого'));
+    const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
+    tb.insertAdjacentHTML('beforeend',`<tr>
+      <td>${c.name} · ${c.adset}</td><td>${c.m}</td>
+      <td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td>
+      <td>${c.ctr!=null?c.ctr+'%':'—'}</td>
+      <td>${c.freq!=null?`<span class="tag ${fcls}">${c.freq}</span>`:'—'}</td>
+      <td>${noBk?'—*':c.book}</td>
+      <td>${noBk?'—*':`${fmt(c.cpa)} <span class="tag ${cls}">${st}</span>`}</td></tr>`);
   }
+  if(cr.some(c=>c.book==null)) document.getElementById('crNote').textContent=
+    '* CPA по креативах поки рахується тільки для Диани — сирі вкладки решти менеджерів не синхронізовані у Windsor.';
   document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало)<br>'+
     'Воронка ліда: <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
