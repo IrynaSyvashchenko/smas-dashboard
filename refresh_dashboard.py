@@ -194,6 +194,7 @@ def compute_bookings():
         # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
         Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "all")}
         booked7d_phones = []   # телефони записаних лідів, створених за 7 днів (для CPA креативів)
+        leads7d = []           # усі ліди за 7 днів з телефоном і прапорцями (для якості по ад-сетах)
 
         for k, r in seen.items():
             t = str(r.get("таргетолог") or "").strip().lower()
@@ -220,6 +221,11 @@ def compute_bookings():
                 if bd: Q[p]["bad"] += 1
                 if nr: Q[p]["noresp"] += 1
 
+            if cd and 0 <= (today - cd).days < 7:
+                ph = phone9(r.get("phone_number"))
+                if ph:
+                    leads7d.append({"ph": ph, "bk": bk, "bad": bd, "nr": nr})
+
             if bk:
                 booked += 1
                 if cd:
@@ -239,7 +245,7 @@ def compute_bookings():
         res[mgr] = {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
                     "bookingsYest": bY, "bookingsMonth": bM,
                     "leads_seen": leads, "old_keys": old_keys, "q": Q,
-                    "booked7d_phones": booked7d_phones}
+                    "booked7d_phones": booked7d_phones, "leads7d": leads7d}
         qa = Q["all"]; ql = qa["leads"] or 1
         liq = qa["leads"] - qa["bad"] - qa["noresp"]
         print("  sheet %-6s iryna %-4d | booked %-3d 7d %-3d yest %-2d | нецільові %d (%.0f%%)  без реакції %d (%.0f%%)  ліквід %d (%.0f%%)"
@@ -286,7 +292,85 @@ def period_metrics(periods):
             out.setdefault(m, {})[key] = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
     return out
 
-def build_creatives(d7from, yest_s, bk):
+def fetch_raw_map():
+    """phone9 -> (manager, ad_name, adset_name) із сирих вкладок.
+    Повертає також список менеджерів, чиї вкладки Windsor реально прочитав."""
+    raw_map, raw_ok = {}, []
+    for mgr, gid in RAW_GID.items():
+        try:
+            n = 0
+            for r in windsor("googlesheets",
+                             ["account_id", "phone_number", "ad_name", "adset_name"],
+                             flt=[["account_id", "eq", "%s-%s" % (SHEET_ID, gid)]]):
+                ph = phone9(r.get("phone_number"))
+                ad = str(r.get("ad_name") or "")
+                aset = str(r.get("adset_name") or "")
+                if not ph or not ad or BROKEN_AD in ad:
+                    continue                     # немає прав на назву оголошення -> пропускаємо
+                raw_map[ph] = (mgr, ad, aset); n += 1
+            if n:
+                raw_ok.append(mgr)
+        except Exception as e:
+            print("  сира вкладка ще не синхронізована:", mgr, "->", str(e)[:70])
+    print("  сирі вкладки працюють для:", ", ".join(raw_ok) if raw_ok else "нікого")
+    return raw_map, raw_ok
+
+def build_adsets(d7from, yest_s, bk, raw_map, raw_ok):
+    """Ад-сети за 7 днів: метрики Meta + ЯКІСТЬ лідів (нецільові / без реакції / ліквід).
+    Саме тут видно проблеми таргетингу (гео, радіус), яких не видно на рівні креативу."""
+    rows = windsor("facebook",
+                   ["account_id", "campaign", "adset_name", "spend",
+                    "impressions", "clicks", "reach", "actions_lead"], d7from, TODAY)
+    recent = windsor("facebook", ["account_id", "campaign", "adset_name", "spend"], yest_s, TODAY)
+    active = set()
+    for r in recent:
+        if acct_ok(r) and num(r.get("spend")) > 0:
+            active.add((r.get("campaign"), r.get("adset_name")))
+
+    agg = {}
+    for r in rows:
+        if not acct_ok(r): continue
+        kind, m = classify(r.get("campaign"))
+        if kind != "lead" or m is None: continue
+        key = (r.get("campaign"), r.get("adset_name"))
+        if key not in active: continue
+        a = agg.setdefault(key, {"m": m, "spend": 0.0, "leads": 0,
+                                 "imp": 0.0, "clicks": 0.0, "reach": 0.0})
+        a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
+        a["imp"]   += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
+        a["reach"] += num(r.get("reach"))
+
+    # якість лідів по ад-сетах: беремо ліди за 7 днів і зв'язуємо їх з ад-сетом по телефону
+    qmap = {}   # (manager, adset_name) -> {leads,bad,noresp,book}
+    for mgr in raw_ok:
+        for L in (bk.get(mgr, {}) or {}).get("leads7d", []):
+            hit = raw_map.get(L["ph"])
+            if not hit or hit[0] != mgr or not hit[2]:
+                continue
+            q = qmap.setdefault((mgr, hit[2]), {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
+            q["leads"] += 1
+            if L["bad"]: q["bad"] += 1
+            if L["nr"]:  q["noresp"] += 1
+            if L["bk"]:  q["book"] += 1
+
+    out = []
+    for (camp, aset), a in agg.items():
+        m = a["m"]; sp = round(a["spend"], 2); ld = a["leads"]
+        rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
+        q = qmap.get((m, aset))
+        book = q["book"] if q else None
+        out.append({"m": m, "campaign": camp, "adset": aset,
+                    "spend": sp, "leads": ld,
+                    "cpl": round(sp / ld, 2) if ld else None,
+                    "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"],
+                    "book": book,
+                    "cpa": round(sp / book, 2) if book else None,
+                    "q": q})
+    out.sort(key=lambda x: -(x["spend"] or 0))
+    print("  ад-сети: %d активних, якість є для %d" % (len(out), sum(1 for x in out if x["q"])))
+    return out
+
+def build_creatives(d7from, yest_s, bk, raw_map, raw_ok):
     """Свіжі креативи за 7 днів, тільки АКТИВНІ (витрати > 0 вчора/сьогодні)."""
     ads = windsor("facebook",
                   ["account_id", "campaign", "adset_name", "ad_name", "spend",
@@ -297,23 +381,6 @@ def build_creatives(d7from, yest_s, bk):
     for r in recent:
         if acct_ok(r) and num(r.get("spend")) > 0:
             active.add((r.get("campaign"), r.get("adset_name"), r.get("ad_name")))
-
-    raw_map = {}   # phone9 -> (manager, ad_name)  із сирих вкладок
-    raw_ok = []
-    for mgr, gid in RAW_GID.items():
-        try:
-            n = 0
-            for r in windsor("googlesheets", ["account_id", "phone_number", "ad_name"],
-                             flt=[["account_id", "eq", "%s-%s" % (SHEET_ID, gid)]]):
-                ph = phone9(r.get("phone_number")); ad = str(r.get("ad_name") or "")
-                if not ph or not ad or BROKEN_AD in ad:
-                    continue                      # немає прав на назву оголошення -> пропускаємо
-                raw_map[ph] = (mgr, ad); n += 1
-            if n:
-                raw_ok.append(mgr)
-        except Exception as e:
-            print("  raw sheet ще не синхронізована:", mgr, "->", str(e)[:80])
-    print("  сирі вкладки працюють для:", ", ".join(raw_ok) if raw_ok else "нікого")
 
     agg = {}
     for r in ads:
@@ -437,12 +504,24 @@ def main():
         print("period metrics failed -> skipping:", e)
 
     try:
-        cr = build_creatives(d7from, yest_s, bk)
+        raw_map, raw_ok = fetch_raw_map()
+    except Exception as e:
+        print("raw map failed:", e); raw_map, raw_ok = {}, []
+
+    try:
+        cr = build_creatives(d7from, yest_s, bk, raw_map, raw_ok)
         if cr:
             out["creatives"] = cr
             out["creativesPeriod"] = "останні 7 днів, тільки активні"
     except Exception as e:
         print("creatives failed -> carrying over old ones:", e)
+
+    try:
+        ads_ = build_adsets(d7from, yest_s, bk, raw_map, raw_ok)
+        if ads_:
+            out["adsets"] = ads_
+    except Exception as e:
+        print("adsets failed:", e)
 
     # recompute cpa/conv from (possibly updated) bookings + fresh spend/leads
     for m, node in out["managers"].items():
