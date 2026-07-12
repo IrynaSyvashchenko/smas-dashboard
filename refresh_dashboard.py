@@ -4,17 +4,26 @@ Cloud dashboard refresh (runs in GitHub Actions every 2h, 24/7).
 
 Refreshes both:
   * Meta ad numbers (spend / leads / CPL / instSpend + daily graphs) via Windsor 'facebook'
-  * Bookings (записи: total / 7d / 1d) via Windsor 'googlesheets' (manager tabs)
+  * Bookings + lead quality via the Apps Script BRIDGE (Google Sheets, read as Iryna)
+
+Google Sheets no longer go through Windsor: Windsor mangled the tab names («фб3» -> cell FB3)
+and its trial expires. The bridge is a Web App deployed on Iryna's own account, so it reads
+exactly the sheets she already has access to. No sheet is ever made public.
 
 Everything is defensive: if the sheet step fails, bookings are carried over from the
 existing data.json and the Meta refresh still commits. Bookings are never zeroed on error.
-creatives + bookingsOld1d are carried over (bookingsOld1d needs a day-baseline snapshot).
 
-Requires env var WINDSOR_API_KEY (GitHub Actions secret). Reads/writes ./data.json.
+Env vars (GitHub Actions secrets):
+  WINDSOR_API_KEY  -> Meta ads
+  SHEETS_URL       -> https://script.google.com/macros/s/.../exec
+  SHEETS_KEY       -> shared secret checked by the bridge
+Reads/writes ./data.json.
 """
 import os, json, datetime, urllib.request, urllib.parse, urllib.error, sys
 
-API_KEY   = os.environ.get("WINDSOR_API_KEY", "").strip()
+API_KEY    = os.environ.get("WINDSOR_API_KEY", "").strip()
+SHEETS_URL = os.environ.get("SHEETS_URL", "").strip()
+SHEETS_KEY = os.environ.get("SHEETS_KEY", "").strip()
 ACCOUNT   = "873265084670144"
 DATE_FROM = "2026-06-20"
 TODAY     = datetime.date.today().isoformat()
@@ -24,16 +33,14 @@ TZ        = datetime.timezone(datetime.timedelta(hours=2))
 LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Alissa",
            "Саида": "Saida", "Даша": "Dasha"}
 
-# Google Sheet manager tabs. Даша (1406387900) works once her tab is connected in Windsor;
-# until then her filtered fetch returns 0 rows and her bookings are safely carried over.
+# Google Sheet manager tabs, read through the Apps Script bridge (gid = tab id in the sheet).
+# If a tab can't be read, that manager's fetch fails softly and her bookings are carried over.
 SHEET_ID = "1sOFTQ3NTeEEFrDbUjdl3p7Jhlx-Fk7duQhk43Rikxx8"
 MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
                "Алиса": "36427361", "Саида": "2065248461", "Даша": "1406387900"}
 STATUS_FIELDS = ["первый_звонок", "первое_сообщение", "второй_звонок", "второе_сообщение",
                  "третий_звонок", "третье_сообщение", "третье_сообщение_",
                  "написал_на_whatsapp", "написал_на_whatsapp_1", "написал_на_whatsapp_2", "lead_status"]
-SHEET_FIELDS = ["account_id", "phone_number", "created_time", "таргетолог",
-                "дата_и_время_записи"] + STATUS_FIELDS
 
 def http_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": "smas-dashboard-refresh"})
@@ -157,22 +164,48 @@ def is_noresp(r):
     # без реакції — дивимось ПОТОЧНИЙ стан (останній статус), бо менеджер міг дотиснути пізніше
     s = _last_status(r); return any(k in s for k in NORESP_KW)
 
+def _norm_header(h):
+    """«Дата и время записи» -> «дата_и_время_записи» (як це робив Windsor)."""
+    return str(h).strip().lower().replace(" ", "_")
+
+def _strip_id_prefix(v):
+    """Google Sheets лід-експорт пише 'as:12345', 'ag:12345', 'p:+33...'. Знімаємо префікс."""
+    s = str(v or "").strip()
+    if len(s) > 1 and ":" in s[:4]:
+        s = s.split(":", 1)[1]
+    return s.strip()
+
+_SHEET_CACHE = {}
+
 def fetch_sheet_rows(gid):
-    # Windsor has NO account_id query param; select the tab via a filter on the account_id field.
-    fields = urllib.parse.quote(",".join(SHEET_FIELDS), safe=",")
-    flt = urllib.parse.quote(json.dumps([["account_id", "eq", "%s-%s" % (SHEET_ID, gid)]]))
-    url = ("https://connectors.windsor.ai/googlesheets?api_key=%s&fields=%s&filter=%s"
-           % (urllib.parse.quote(API_KEY), fields, flt))
+    """Читає вкладку через Apps Script-міст. Повертає список dict-ів з нормалізованими
+    ключами заголовків — тобто те саме, що раніше віддавав Windsor."""
+    if gid in _SHEET_CACHE:
+        return _SHEET_CACHE[gid]
+    if not SHEETS_URL or not SHEETS_KEY:
+        raise RuntimeError("SHEETS_URL / SHEETS_KEY не задані")
+    url = "%s?key=%s&ss=%s&gid=%s" % (SHEETS_URL, urllib.parse.quote(SHEETS_KEY),
+                                      SHEET_ID, gid)
     try:
-        payload = http_json(url)
+        payload = http_json(url)           # Apps Script віддає 302 -> urllib йде за ним сам
     except urllib.error.HTTPError as e:
         body = ""
         try: body = e.read().decode("utf-8", "replace")[:300]
         except Exception: pass
         raise RuntimeError("HTTP %s: %s" % (e.code, body))
-    rows = payload.get("data") or payload.get("result") or []
-    same = [r for r in rows if str(r.get("account_id", "")).endswith("-" + gid)]
-    return same if same else rows
+    if isinstance(payload, dict) and payload.get("error"):
+        raise RuntimeError("bridge: %s" % payload["error"])
+
+    headers = [_norm_header(h) for h in (payload.get("headers") or [])]
+    rows = []
+    for raw in (payload.get("rows") or []):
+        d = {}
+        for i, h in enumerate(headers):
+            if h and i < len(raw):
+                d[h] = raw[i]
+        rows.append(d)
+    _SHEET_CACHE[gid] = rows
+    return rows
 
 def compute_bookings():
     """Return {manager: {bookings,bookings7d,bookings1d,leads_seen}} or None on total failure."""
@@ -256,9 +289,7 @@ def compute_bookings():
     return res or None
 
 # ---------------- META: метрики по періодах + свіжі креативи ----------------
-# Сирі вкладки (лід -> креатив по телефону). Якщо котрась ще не синхронізована у Windsor,
-# вона тихо пропускається, а CPA тих креативів = null. Щойно Windsor її підтягне —
-# зазапрацює саме, без зміни коду.
+# Сирі вкладки (лід -> ad_id / adset_id по телефону). Читаються через міст, не через Windsor.
 RAW_GID = {
     "Диана": "1148517845",   # 21.06.26_Praha_leads_Diana_model
     "Саида": "1993887386",   # fb.
@@ -293,25 +324,32 @@ def period_metrics(periods):
     return out
 
 def fetch_raw_map():
-    """phone9 -> (manager, ad_name, adset_name) із сирих вкладок.
-    Повертає також список менеджерів, чиї вкладки Windsor реально прочитав."""
+    """phone9 -> {m, ad_id, adset_id, ad, adset} із сирих вкладок.
+
+    ВАЖЛИВО: зв'язуємо по ID, а не по НАЗВІ. У сирій вкладці лежить назва ад-сета
+    на момент захоплення ліда; Ірина ад-сети перейменовує, тому join по назві
+    втрачає ліди (перевірено: tochka15 — 62 ліди в Meta, 18 при join по назві)."""
     raw_map, raw_ok = {}, []
     for mgr, gid in RAW_GID.items():
         try:
             n = 0
-            for r in windsor("googlesheets",
-                             ["account_id", "phone_number", "ad_name", "adset_name"],
-                             flt=[["account_id", "eq", "%s-%s" % (SHEET_ID, gid)]]):
-                ph = phone9(r.get("phone_number"))
-                ad = str(r.get("ad_name") or "")
-                aset = str(r.get("adset_name") or "")
-                if not ph or not ad or BROKEN_AD in ad:
-                    continue                     # немає прав на назву оголошення -> пропускаємо
-                raw_map[ph] = (mgr, ad, aset); n += 1
+            for r in fetch_sheet_rows(gid):
+                ph     = phone9(r.get("phone_number"))
+                ad_id  = _strip_id_prefix(r.get("ad_id"))
+                as_id  = _strip_id_prefix(r.get("adset_id"))
+                if not ph or not ad_id:
+                    continue
+                if BROKEN_AD in ad_id or BROKEN_AD in as_id:
+                    continue                     # Meta не віддала ID через права доступу
+                raw_map[ph] = {"m": mgr, "ad_id": ad_id, "adset_id": as_id,
+                               "ad":    str(r.get("ad_name") or ""),
+                               "adset": str(r.get("adset_name") or "")}
+                n += 1
             if n:
                 raw_ok.append(mgr)
+            print("  сира вкладка %-6s -> %d лідів з ID" % (mgr, n))
         except Exception as e:
-            print("  сира вкладка ще не синхронізована:", mgr, "->", str(e)[:70])
+            print("  сира вкладка НЕ прочиталась:", mgr, "->", str(e)[:90])
     print("  сирі вкладки працюють для:", ", ".join(raw_ok) if raw_ok else "нікого")
     return raw_map, raw_ok
 
@@ -319,47 +357,50 @@ def build_adsets(d7from, yest_s, bk, raw_map, raw_ok):
     """Ад-сети за 7 днів: метрики Meta + ЯКІСТЬ лідів (нецільові / без реакції / ліквід).
     Саме тут видно проблеми таргетингу (гео, радіус), яких не видно на рівні креативу."""
     rows = windsor("facebook",
-                   ["account_id", "campaign", "adset_name", "spend",
+                   ["account_id", "campaign", "adset_id", "adset_name", "spend",
                     "impressions", "clicks", "reach", "actions_lead"], d7from, TODAY)
-    recent = windsor("facebook", ["account_id", "campaign", "adset_name", "spend"], yest_s, TODAY)
+    recent = windsor("facebook", ["account_id", "adset_id", "spend"], yest_s, TODAY)
     active = set()
     for r in recent:
         if acct_ok(r) and num(r.get("spend")) > 0:
-            active.add((r.get("campaign"), r.get("adset_name")))
+            active.add(str(r.get("adset_id") or ""))
 
     agg = {}
     for r in rows:
         if not acct_ok(r): continue
         kind, m = classify(r.get("campaign"))
         if kind != "lead" or m is None: continue
-        key = (r.get("campaign"), r.get("adset_name"))
-        if key not in active: continue
-        a = agg.setdefault(key, {"m": m, "spend": 0.0, "leads": 0,
+        aid = str(r.get("adset_id") or "")
+        if not aid or aid not in active: continue
+        a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
+                                 "adset": r.get("adset_name"),
+                                 "spend": 0.0, "leads": 0,
                                  "imp": 0.0, "clicks": 0.0, "reach": 0.0})
+        if r.get("adset_name"): a["adset"] = r.get("adset_name")   # завжди свіжа назва
         a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
         a["imp"]   += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
         a["reach"] += num(r.get("reach"))
 
-    # якість лідів по ад-сетах: беремо ліди за 7 днів і зв'язуємо їх з ад-сетом по телефону
-    qmap = {}   # (manager, adset_name) -> {leads,bad,noresp,book}
+    # якість лідів по ад-сетах: ліди за 7 днів -> ад-сет ПО adset_id (не по назві!)
+    qmap = {}   # adset_id -> {leads,bad,noresp,book}
     for mgr in raw_ok:
         for L in (bk.get(mgr, {}) or {}).get("leads7d", []):
             hit = raw_map.get(L["ph"])
-            if not hit or hit[0] != mgr or not hit[2]:
+            if not hit or hit["m"] != mgr or not hit["adset_id"]:
                 continue
-            q = qmap.setdefault((mgr, hit[2]), {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
+            q = qmap.setdefault(hit["adset_id"], {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
             q["leads"] += 1
             if L["bad"]: q["bad"] += 1
             if L["nr"]:  q["noresp"] += 1
             if L["bk"]:  q["book"] += 1
 
     out = []
-    for (camp, aset), a in agg.items():
+    for aid, a in agg.items():
         m = a["m"]; sp = round(a["spend"], 2); ld = a["leads"]
         rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
-        q = qmap.get((m, aset))
+        q = qmap.get(aid) if m in raw_ok else None
         book = q["book"] if q else None
-        out.append({"m": m, "campaign": camp, "adset": aset,
+        out.append({"m": m, "campaign": a["campaign"], "adset": a["adset"],
                     "spend": sp, "leads": ld,
                     "cpl": round(sp / ld, 2) if ld else None,
                     "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"],
@@ -373,30 +414,33 @@ def build_adsets(d7from, yest_s, bk, raw_map, raw_ok):
 def build_creatives(d7from, yest_s, bk, raw_map, raw_ok):
     """Свіжі креативи за 7 днів, тільки АКТИВНІ (витрати > 0 вчора/сьогодні)."""
     ads = windsor("facebook",
-                  ["account_id", "campaign", "adset_name", "ad_name", "spend",
+                  ["account_id", "campaign", "adset_name", "ad_id", "ad_name", "spend",
                    "impressions", "clicks", "reach", "actions_lead"], d7from, TODAY)
-    recent = windsor("facebook",
-                     ["account_id", "campaign", "adset_name", "ad_name", "spend"], yest_s, TODAY)
+    recent = windsor("facebook", ["account_id", "ad_id", "spend"], yest_s, TODAY)
     active = set()
     for r in recent:
         if acct_ok(r) and num(r.get("spend")) > 0:
-            active.add((r.get("campaign"), r.get("adset_name"), r.get("ad_name")))
+            active.add(str(r.get("ad_id") or ""))
 
     agg = {}
     for r in ads:
         if not acct_ok(r): continue
         kind, m = classify(r.get("campaign"))
         if kind != "lead" or m is None: continue
-        key = (r.get("campaign"), r.get("adset_name"), r.get("ad_name"))
-        if key not in active: continue
-        a = agg.setdefault(key, {"m": m, "spend": 0.0, "leads": 0,
+        aid = str(r.get("ad_id") or "")
+        if not aid or aid not in active: continue
+        a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
+                                 "adset": r.get("adset_name"), "ad": r.get("ad_name"),
+                                 "spend": 0.0, "leads": 0,
                                  "imp": 0.0, "clicks": 0.0, "reach": 0.0})
+        if r.get("ad_name"):    a["ad"]    = r.get("ad_name")      # завжди свіжі назви
+        if r.get("adset_name"): a["adset"] = r.get("adset_name")
         a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
         a["imp"]   += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
         a["reach"] += num(r.get("reach"))
 
     out = []
-    for (camp, adset, ad), a in agg.items():
+    for aid, a in agg.items():
         m = a["m"]; sp = round(a["spend"], 2); ld = a["leads"]
         rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
         book = None
@@ -404,9 +448,9 @@ def build_creatives(d7from, yest_s, bk, raw_map, raw_ok):
             book = 0
             for ph in bk[m].get("booked7d_phones", []):
                 hit = raw_map.get(ph)
-                if hit and hit[0] == m and hit[1] == ad:
+                if hit and hit["m"] == m and hit["ad_id"] == aid:   # по ad_id, не по назві
                     book += 1
-        out.append({"m": m, "name": ad, "adset": adset, "campaign": camp,
+        out.append({"m": m, "name": a["ad"], "adset": a["adset"], "campaign": a["campaign"],
                     "spend": sp, "leads": ld,
                     "cpl":  round(sp / ld, 2) if ld else None,
                     "book": book,
