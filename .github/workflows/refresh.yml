@@ -25,9 +25,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Refresh data.json from Windsor
+      - name: Refresh data.json (Meta via Windsor, sheets via Apps Script bridge)
         env:
           WINDSOR_API_KEY: ${{ secrets.WINDSOR_API_KEY }}
+          SHEETS_URL: ${{ secrets.SHEETS_URL }}
+          SHEETS_KEY: ${{ secrets.SHEETS_KEY }}
         run: python refresh_dashboard.py
 
       - name: Commit if changed
@@ -38,7 +40,4 @@ jobs:
             git add data.json
             git commit -m "auto: data refresh $(date -u +'%Y-%m-%d %H:%M UTC')"
             git push
-          else
-            echo "data.json unchanged — nothing to commit"
           fi
-
