@@ -26,6 +26,12 @@ h2{font-size:1.1rem;margin:28px 0 12px;color:var(--acc)}
 .city{font-size:.7rem;color:var(--mut);background:var(--card2);padding:2px 8px;border-radius:10px}
 .big{font-size:1.6rem;font-weight:700;margin:8px 0 2px}
 .big small{font-size:.75rem;color:var(--mut);font-weight:400}
+.bigrow{display:flex;gap:22px;margin:8px 0 8px}
+.bigrow .big{margin:0}
+.bigrow .lbl{font-size:.7rem;color:var(--mut);margin-top:1px}
+.card.total{border-color:var(--acc)}
+.morealerts summary{cursor:pointer;color:var(--mut);font-size:.82rem;padding:5px 2px;list-style-position:inside}
+.morealerts[open] summary{margin-bottom:6px}
 .row{display:flex;justify-content:space-between;font-size:.82rem;padding:3px 0;border-bottom:1px dashed var(--border)}
 .row:last-child{border:none}
 .row .l{color:var(--mut)}
@@ -68,7 +74,7 @@ tr:hover td{background:var(--card2)}
 <div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
 
 <h2 id="asTitle">Ад-сети (аудиторія · гео)</h2>
-<div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно.</div>
+<div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно. Тут же — нецільові й «без реакції» по кожному ад-сету.</div>
 <div style="overflow-x:auto"><table id="asTable">
 <thead><tr><th>Ад-сет · кампанія</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Нецільові</th><th>Без реакції</th><th>Записи</th><th>CPA</th></tr></thead>
 <tbody></tbody></table></div>
@@ -77,14 +83,14 @@ tr:hover td{background:var(--card2)}
 <h2 id="crTitle">Креативи</h2>
 <div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
 <div style="overflow-x:auto"><table id="crTable">
-<thead><tr><th>Креатив · ед сет</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th></tr></thead>
+<thead><tr><th>Креатив · ад-сет</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="crNote"></div>
 
 <div class="foot" id="foot"></div>
 
 <script>
-const COLORS={'Диана':'#4f8cff','Таня':'#3ecf8e','Алиса':'#f5b942','Саида':'#ff6b6b','Максим':'#ff6b6b','Даша':'#b47fff'};
+const COLORS={'Диана':'#4f8cff','Таня':'#3ecf8e','Алиса':'#f5b942','Саида':'#ff6b6b','Максим':'#ff6b6b','Даша':'#b47fff','Юлиана':'#2dd4bf'};
 const MONTHS=['Січень','Лютий','Березень','Квітень','Травень','Червень','Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'];
 const fmt=(v,d=2)=>v==null||isNaN(v)?'—':'$'+Number(v).toFixed(d);
 const dd=s=>s.slice(8,10)+'.'+s.slice(5,7);
@@ -141,18 +147,15 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const AS=normP(D.adsets), CR=normP(D.creatives);
   const OLDFMT_NOTE='⚠️ Дані таблиці поки за останні 7 днів (старий формат) — перемикання періодів запрацює після наступного автооновлення (до 2 год). ';
 
-  // якість трафіку: нецільові (гео/сміття) · без реакції (людина не відповіла) · ліквід (вийшли на контакт)
-  const qualityRows=(m,p,sp,ld)=>{
-    const q=m.q&&m.q[p.qk];
-    if(!q||!q.leads) return '';
-    const liq=Math.max(q.leads-q.bad-(q.noresp||0),0);
-    const badR=q.bad/q.leads, nrR=(q.noresp||0)/q.leads, liqR=liq/q.leads;
-    const cplLiq=(ld&&liqR>0)?sp/(ld*liqR):null;   // ціна ліда, який реально вийшов на контакт
-    const cls=r=>r>=.2?'r':r>=.1?'y':'g';
-    return `<div class="row"><span class="l">Нецільові (гео/сміття)</span><b><span class="tag ${cls(badR)}">${q.bad} · ${Math.round(badR*100)}%</span></b></div>
-            <div class="row"><span class="l">Без реакції</span><b><span class="tag ${nrR>=.4?'r':nrR>=.25?'y':'g'}">${q.noresp||0} · ${Math.round(nrR*100)}%</span></b></div>
-            <div class="row"><span class="l">Ліквід (на контакті)</span><b><span class="tag ${liqR>=.5?'g':liqR>=.3?'y':'r'}">${liq} · ${Math.round(liqR*100)}%</span></b></div>
-            <div class="row"><span class="l">CPL ліквіда</span><b>${fmt(cplLiq)}</b></div>`;
+  // ROAS = записи x середній чек / витрати. Оцінка: запис ще не оплачена процедура.
+  const CURSIGN={EUR:'€',CZK:'Kč',USD:'$'};
+  const roasRows=(m,sp,bk)=>{
+    const c=m.check;
+    if(!c||!sp) return '';
+    const rev=bk*c.usd, r=rev/sp;
+    const cls=r>=2?'g':r>=1?'y':'r';
+    return `<div class="row"><span class="l">Дохід (${bk} × ${c.amount} ${CURSIGN[c.cur]||c.cur})</span><b>${fmt(rev)}</b></div>
+            <div class="row"><span class="l">ROAS (оцінка)</span><b><span class="tag ${cls}">${r.toFixed(2)}</span></b></div>`;
   };
 
   const tabsEl=document.getElementById('tabs');
@@ -173,42 +176,40 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
             <div class="row"><span class="l">Частота</span><b><span class="tag ${fcls}">${f??'—'}</span></b></div>`;
   };
 
+  // Алерти: тільки те, що вимагає ДІЇ, без дублювання менеджер/ад-сет/креатив.
+  // Гроші без лідів -> вимкнути; частота креативу -> замінити; гео/холодна аудиторія -> ад-сет.
   function buildAlerts(k){
     const A=[];
-    for(const [name,m] of Object.entries(M)){
-      const x=m.m&&m.m[k], q=m.q&&m.q[k];
-      if(x&&x.freq!=null&&x.freq>=2.5)
-        A.push(['bad',`<b>${name}</b>: частота <b>${x.freq}</b> — аудиторія бачить рекламу забагато разів, креативи вигорають. Онови креатив або розшир аудиторію.`]);
-      if(q&&q.leads>=10){
-        const nr=(q.noresp||0)/q.leads, bd=q.bad/q.leads;
-        if(nr>=.5) A.push(['bad',`<b>${name}</b>: <b>${Math.round(nr*100)}%</b> лідів взагалі не відповідають — креатив/офер тягне незацікавлених. Це не менеджер.`]);
-        if(bd>=.2) A.push(['warn',`<b>${name}</b>: <b>${Math.round(bd*100)}%</b> нецільових (не з міста / сміттєвий номер) — перевір гео і радіус в ад-сетах.`]);
-      }
-    }
-    // ад-сети: тут ловиться таргетинг (гео/радіус) — те, що не видно на рівні креативу
+    const deadAdsets=new Set();
     for(const a of (AS[k]||[])){
       const q=a.q;
-      if(q&&q.leads>=5){
-        const bR=Math.round(q.bad/q.leads*100);
-        if(bR>=20) A.push(['bad',`Ад-сет <b>${a.adset}</b> (${a.m}): <b>${bR}%</b> нецільових лідів — перевір гео/радіус саме в цьому ад-сеті.`]);
-        const nR=Math.round(q.noresp/q.leads*100);
-        if(nR>=50) A.push(['warn',`Ад-сет <b>${a.adset}</b> (${a.m}): <b>${nR}%</b> лідів не відповідають — аудиторія холодна.`]);
+      if(a.spend>=5&&a.leads===0){
+        deadAdsets.add(a.adset);
+        A.push(['bad',`💸 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> витрачено, <b>0 лідів</b> — перевір або вимкни.`]);
       }
-      if(a.freq!=null&&a.freq>=2.5)
-        A.push(['bad',`Ад-сет <b>${a.adset}</b> (${a.m}): частота <b>${a.freq}</b> — аудиторія вузька, вигорає.`]);
-      if(a.spend>=5&&a.leads===0)
-        A.push(['bad',`Ад-сет <b>${a.adset}</b> (${a.m}): витрачено <b>${fmt(a.spend)}</b>, <b>0 лідів</b>.`]);
+      if(q&&q.leads>=5&&q.bad/q.leads>=.2)
+        A.push(['warn',`📍 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${Math.round(q.bad/q.leads*100)}%</b> нецільових — перевір гео/радіус.`]);
+      if(q&&q.leads>=10&&q.noresp/q.leads>=.5)
+        A.push(['warn',`🥶 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${Math.round(q.noresp/q.leads*100)}%</b> лідів без реакції — креатив/офер тягне незацікавлених.`]);
     }
     for(const c of (CR[k]||[])){
-      if(c.freq!=null&&c.freq>=2.5)
-        A.push(['bad',`Креатив <b>${c.name}</b> · ${c.adset} (${c.m}): частота <b>${c.freq}</b> — вигорів.`]);
+      if(deadAdsets.has(c.adset)) continue;   // алерт по цілому ад-сету вже є
       if(c.spend>=5&&c.leads===0)
-        A.push(['bad',`Креатив <b>${c.name}</b> (${c.m}): витрачено <b>${fmt(c.spend)}</b>, <b>0 лідів</b> — вимикай.`]);
+        A.push(['bad',`💸 Креатив <b>${c.name}</b> (${c.m}): <b>${fmt(c.spend)}</b> без лідів — вимикай.`]);
+      if(c.freq!=null&&c.freq>=2.5)
+        A.push(['bad',`🔁 Креатив <b>${c.name}</b> (${c.m}): частота <b>${c.freq}</b> — вигорів, потрібна заміна.`]);
     }
+    A.sort((a,b)=>(a[0]==='bad'?0:1)-(b[0]==='bad'?0:1));   // спочатку критичні
     const el=document.getElementById('alerts');
-    el.innerHTML = A.length
-      ? A.map(([t,txt])=>`<div class="alert ${t==='warn'?'warn':''}">${txt}</div>`).join('')
-      : `<div class="alert ok">✅ Критичних проблем немає: частота в нормі, креативів без лідів немає.</div>`;
+    if(!A.length){
+      el.innerHTML=`<div class="alert ok">✅ Критичного нічого: гроші без лідів не горять, креативи не вигоріли, гео в нормі.</div>`;
+      return;
+    }
+    const MAXV=4, html=t=>`<div class="alert ${t[0]==='warn'?'warn':''}">${t[1]}</div>`;
+    let out=A.slice(0,MAXV).map(html).join('');
+    if(A.length>MAXV)
+      out+=`<details class="morealerts"><summary>Показати ще ${A.length-MAXV}</summary>${A.slice(MAXV).map(html).join('')}</details>`;
+    el.innerHTML=out;
   }
 
   function render(k){
@@ -216,25 +217,45 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     document.getElementById('phint').textContent=p.hint;
     buildAlerts(k);
     el.innerHTML='';
+    let tSp=0,tLd=0,tBk=0,tRev=0,tRevSp=0;
+    const cards=[];
     for(const [name,m] of Object.entries(M)){
       let sp=0,ld=0;
       m.dates.forEach((d,i)=>{ if(p.pred(d)){ sp+=m.spend[i]||0; ld+=m.leads[i]||0; } });
       sp=Math.round(sp*100)/100;
       const bk=p.bk(m);
+      tSp+=sp; tLd+=ld; tBk+=bk;
+      if(m.check&&sp){ tRev+=bk*m.check.usd; tRevSp+=sp; }
       const cpl=ld?sp/ld:null, cpa=bk?sp/bk:null, conv=ld?Math.round(bk/ld*1000)/10+'%':'—';
-      el.insertAdjacentHTML('beforeend',`<div class="card">
+      cards.push(`<div class="card">
         <h3>${name} <span class="city">${m.city}</span></h3>
-        <div class="big">${fmt(cpl)} <small>за ліда</small></div>
+        <div class="bigrow">
+          <div><div class="big">${fmt(cpl)}</div><div class="lbl">CPL · лід</div></div>
+          <div><div class="big">${fmt(cpa)}</div><div class="lbl">CPA · запис</div></div>
+        </div>
         <div class="row"><span class="l">Витрати</span><b>${fmt(sp)}</b></div>
         <div class="row"><span class="l">Ліди</span><b>${ld}</b></div>
         <div class="row"><span class="l">Записи</span><b>${bk}</b></div>
-        <div class="row"><span class="l">CPA (запис)</span><b>${fmt(cpa)}</b></div>
-        <div class="row"><span class="l">Конверсія</span><b>${conv}</b></div>
-        ${qualityRows(m,p,sp,ld)}
+        <div class="row"><span class="l">Конверсія в запис</span><b>${conv}</b></div>
+        ${roasRows(m,sp,bk)}
         ${metaRows(m,p)}
         ${p.extra(m)}
       </div>`);
     }
+    // зведення по всіх менеджерах за обраний період
+    const tCpl=tLd?tSp/tLd:null, tCpa=tBk?tSp/tBk:null, tRoas=(tRev&&tRevSp)?tRev/tRevSp:null;
+    el.insertAdjacentHTML('beforeend',`<div class="card total">
+      <h3>Разом <span class="city">всі міста</span></h3>
+      <div class="bigrow">
+        <div><div class="big">${fmt(tCpl)}</div><div class="lbl">CPL · лід</div></div>
+        <div><div class="big">${fmt(tCpa)}</div><div class="lbl">CPA · запис</div></div>
+      </div>
+      <div class="row"><span class="l">Витрати</span><b>${fmt(tSp)}</b></div>
+      <div class="row"><span class="l">Ліди</span><b>${tLd}</b></div>
+      <div class="row"><span class="l">Записи</span><b>${tBk}</b></div>
+      <div class="row"><span class="l">Конверсія в запис</span><b>${tLd?Math.round(tBk/tLd*1000)/10+'%':'—'}</b></div>
+      ${tRoas!=null?`<div class="row"><span class="l">ROAS (оцінка)</span><b><span class="tag ${tRoas>=2?'g':tRoas>=1?'y':'r'}">${tRoas.toFixed(2)}</span></b></div>`:''}
+    </div>`+cards.join(''));
     renderAdsets(k);
     renderCreatives(k);
   }
@@ -311,9 +332,10 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   new Chart(spendChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
 
   document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало)<br>'+
-    'Воронка ліда: <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль) → проблема <b>таргетингу</b>. '+
+    'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
-    '<b>Ліквід</b> = реально вийшли на контакт. <b>CPL ліквіда</b> = скільки коштує лід, який справді відповів.<br>'+
+    '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
+    '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж = ціна оферу кампанії, Прага = 3990 Kč (модель).<br>'+
     'CPA рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads + Google-таблиця';
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
