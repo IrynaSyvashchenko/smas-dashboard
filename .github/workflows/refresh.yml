@@ -28,6 +28,7 @@ jobs:
       - name: Refresh data.json (Meta via Windsor, sheets via Apps Script bridge)
         env:
           WINDSOR_API_KEY: ${{ secrets.WINDSOR_API_KEY }}
+          META_TOKEN: ${{ secrets.META_TOKEN }}
           SHEETS_URL: ${{ secrets.SHEETS_URL }}
           SHEETS_KEY: ${{ secrets.SHEETS_KEY }}
         run: python refresh_dashboard.py
