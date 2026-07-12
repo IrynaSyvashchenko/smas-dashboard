@@ -22,8 +22,17 @@ Reads/writes ./data.json.
 import os, json, datetime, urllib.request, urllib.parse, urllib.error, sys
 
 API_KEY    = os.environ.get("WINDSOR_API_KEY", "").strip()
-SHEETS_URL = os.environ.get("SHEETS_URL", "").strip()
-SHEETS_KEY = os.environ.get("SHEETS_KEY", "").strip()
+def _clean_secret(name):
+    """Прибираємо пробіли/переноси і випадкові лапки — типова помилка при вставці в GitHub Secrets."""
+    v = os.environ.get(name, "").strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+        v = v[1:-1].strip()
+    return v
+
+SHEETS_URL = _clean_secret("SHEETS_URL")
+if SHEETS_URL.endswith("/exec/"):
+    SHEETS_URL = SHEETS_URL[:-1]
+SHEETS_KEY = _clean_secret("SHEETS_KEY")
 ACCOUNT   = "873265084670144"
 DATE_FROM = "2026-06-20"
 TODAY     = datetime.date.today().isoformat()
@@ -194,6 +203,9 @@ def fetch_sheet_rows(gid):
         except Exception: pass
         raise RuntimeError("HTTP %s: %s" % (e.code, body))
     if isinstance(payload, dict) and payload.get("error"):
+        if payload["error"] == "forbidden":
+            raise RuntimeError("bridge: forbidden — секрет SHEETS_KEY (%d символів) не збігається "
+                               "з const KEY в Apps Script" % len(SHEETS_KEY))
         raise RuntimeError("bridge: %s" % payload["error"])
 
     headers = [_norm_header(h) for h in (payload.get("headers") or [])]
