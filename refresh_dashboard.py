@@ -134,6 +134,8 @@ def graph_rows(fields, dfrom, dto):
         url = (payload.get("paging") or {}).get("next")
     return out
 
+META_SOURCE = {"used": "windsor"}   # що реально спрацювало в цьому запуску (пишеться в data.json)
+
 def meta_rows(fields, dfrom, dto):
     """Одна точка доступу до Meta: Graph API напряму (якщо є META_TOKEN),
     інакше Windsor. Формат рядків однаковий."""
@@ -183,6 +185,7 @@ def fetch_meta():
                               DATE_FROM, TODAY)
             if rows:
                 print("meta source: GRAPH API | rows:", len(rows))
+                META_SOURCE["used"] = "graph"
                 return rows
             print("graph api returned 0 rows -> falling back to windsor")
         except Exception as e:
@@ -701,6 +704,7 @@ def main():
 
     out = json.loads(json.dumps(cur))
     out["updated"] = datetime.datetime.now(TZ).replace(microsecond=0).isoformat()
+    out["metaSource"] = META_SOURCE["used"]   # graph | windsor — видно в шапці сайту
 
     # Meta-side per manager (bookings carried for now; refined below)
     for m, node in out["managers"].items():
