@@ -68,7 +68,7 @@ tr:hover td{background:var(--card2)}
 <div class="phint" id="phint"></div>
 <div class="cards" id="cards"></div>
 
-<h2>Динаміка</h2>
+<h2>Динаміка (з 01.07)</h2>
 <div class="chartbox"><h3>Ціна ліда (CPL) по днях, $</h3><canvas id="cplChart"></canvas></div>
 <div class="chartbox"><h3>Ліди по днях</h3><canvas id="leadsChart"></canvas></div>
 <div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
@@ -325,14 +325,16 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
 
   render('yest');
 
-  // ---- графіки ----
-  const mkDs=key=>Object.entries(M).map(([n,m])=>({label:n,data:allDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:m[key][i]}),borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
-  new Chart(cplChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('cpl')},options:{interaction:{mode:'index',intersect:false}}});
-  new Chart(leadsChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('leads')},options:{interaction:{mode:'index',intersect:false}}});
-  new Chart(spendChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
+  // ---- графіки (з 1 липня — червневий розгін тільки шумить) ----
+  const CHART_FROM='2026-07-01';
+  const chartDates=allDates.filter(d=>d>=CHART_FROM);
+  const mkDs=key=>Object.entries(M).map(([n,m])=>({label:n,data:chartDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:m[key][i]}),borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
+  new Chart(cplChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('cpl')},options:{interaction:{mode:'index',intersect:false}}});
+  new Chart(leadsChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('leads')},options:{interaction:{mode:'index',intersect:false}}});
+  new Chart(spendChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
 
   document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало)<br>'+
-    'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль) → проблема <b>таргетингу</b>. '+
+    'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль / випадковий) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
     '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж = ціна оферу кампанії, Прага = 3990 Kč (модель).<br>'+
