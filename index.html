@@ -98,7 +98,8 @@ const addD=(s,n)=>{const d=new Date(s+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+
 Chart.defaults.color='#8b96ab';Chart.defaults.borderColor='#2a3550';
 
 fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
-  document.getElementById('updated').textContent='Оновлено: '+new Date(D.updated).toLocaleString('uk-UA')+' · '+D.periodNote;
+  const srcNote=D.metaSource?(D.metaSource==='graph'?' · Meta: Graph API ✅':' · Meta: Windsor (fallback)'):'';
+  document.getElementById('updated').textContent='Оновлено: '+new Date(D.updated).toLocaleString('uk-UA')+' · '+D.periodNote+srcNote;
 
   const M=D.managers;
   const allDates=[...new Set(Object.values(M).flatMap(m=>m.dates))].sort();
@@ -337,7 +338,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль / випадковий) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
-    '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж = ціна оферу кампанії, Прага = 3990 Kč (модель).<br>'+
+    '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії, Прага = 3990 Kč (модель).<br>'+
     'CPA рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads + Google-таблиця';
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
