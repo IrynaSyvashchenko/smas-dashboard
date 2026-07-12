@@ -238,8 +238,7 @@ def compute_bookings():
         old_keys = []                       # keys of booked leads created BEFORE today
         # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
         Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "all")}
-        booked7d_phones = []   # телефони записаних лідів, створених за 7 днів (для CPA креативів)
-        leads7d = []           # усі ліди за 7 днів з телефоном і прапорцями (для якості по ад-сетах)
+        leadsQ = []   # усі мої ліди з телефоном: дата + прапорці (для таблиць ад-сетів/креативів по періодах)
 
         for k, r in seen.items():
             t = str(r.get("таргетолог") or "").strip().lower()
@@ -266,18 +265,16 @@ def compute_bookings():
                 if bd: Q[p]["bad"] += 1
                 if nr: Q[p]["noresp"] += 1
 
-            if cd and 0 <= (today - cd).days < 7:
-                ph = phone9(r.get("phone_number"))
-                if ph:
-                    leads7d.append({"ph": ph, "bk": bk, "bad": bd, "nr": nr})
+            ph = phone9(r.get("phone_number"))
+            if ph:
+                leadsQ.append({"ph": ph, "cd": cd.isoformat() if cd else "",
+                               "bk": bk, "bad": bd, "nr": nr})
 
             if bk:
                 booked += 1
                 if cd:
                     if 0 <= (today - cd).days < 7:
                         b7 += 1
-                        ph = phone9(r.get("phone_number"))
-                        if ph: booked7d_phones.append(ph)
                     if cd == yest: bY += 1
                     if cd >= month_start: bM += 1
                     if cd == today:
@@ -290,7 +287,7 @@ def compute_bookings():
         res[mgr] = {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
                     "bookingsYest": bY, "bookingsMonth": bM,
                     "leads_seen": leads, "old_keys": old_keys, "q": Q,
-                    "booked7d_phones": booked7d_phones, "leads7d": leads7d}
+                    "leadsQ": leadsQ}
         qa = Q["all"]; ql = qa["leads"] or 1
         liq = qa["leads"] - qa["bad"] - qa["noresp"]
         print("  sheet %-6s iryna %-4d | booked %-3d 7d %-3d yest %-2d | нецільові %d (%.0f%%)  без реакції %d (%.0f%%)  ліквід %d (%.0f%%)"
@@ -365,112 +362,136 @@ def fetch_raw_map():
     print("  сирі вкладки працюють для:", ", ".join(raw_ok) if raw_ok else "нікого")
     return raw_map, raw_ok
 
-def build_adsets(d7from, yest_s, bk, raw_map, raw_ok):
-    """Ад-сети за 7 днів: метрики Meta + ЯКІСТЬ лідів (нецільові / без реакції / ліквід).
+def _in_period(cd, dfrom, dto):
+    """cd/dfrom/dto — ISO-рядки дат; для ISO порівняння рядків == порівнянню дат."""
+    return bool(cd) and dfrom <= cd <= dto
+
+def _active_ids(id_field, yest_s):
+    """ID (ад-сетів чи оголошень) з витратами > 0 вчора/сьогодні — «активні».
+    Один і той самий набір для всіх періодів, щоб таблиці не розросталися
+    від давно вимкнених."""
+    recent = windsor("facebook", ["account_id", id_field, "spend"], yest_s, TODAY)
+    return {str(r.get(id_field) or "") for r in recent
+            if acct_ok(r) and num(r.get("spend")) > 0}
+
+def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
+    """Ад-сети ПО КОЖНОМУ ПЕРІОДУ: метрики Meta + ЯКІСТЬ лідів (нецільові / без
+    реакції / записи). Повертає {period_key: [рядки]}. Період, який не вдалось
+    отримати, просто відсутній у результаті — main() лишить для нього старі дані.
     Саме тут видно проблеми таргетингу (гео, радіус), яких не видно на рівні креативу."""
-    rows = windsor("facebook",
-                   ["account_id", "campaign", "adset_id", "adset_name", "spend",
-                    "impressions", "clicks", "reach", "actions_lead"], d7from, TODAY)
-    recent = windsor("facebook", ["account_id", "adset_id", "spend"], yest_s, TODAY)
-    active = set()
-    for r in recent:
-        if acct_ok(r) and num(r.get("spend")) > 0:
-            active.add(str(r.get("adset_id") or ""))
+    active = _active_ids("adset_id", yest_s)
+    out = {}
+    for key, (dfrom, dto) in periods.items():
+        try:
+            rows = windsor("facebook",
+                           ["account_id", "campaign", "adset_id", "adset_name", "spend",
+                            "impressions", "clicks", "reach", "actions_lead"], dfrom, dto)
+        except Exception as e:
+            print("  ад-сети period FAIL", key, "->", e); continue
+        agg = {}
+        for r in rows:
+            if not acct_ok(r): continue
+            kind, m = classify(r.get("campaign"))
+            if kind != "lead" or m is None: continue
+            aid = str(r.get("adset_id") or "")
+            if not aid or aid not in active: continue
+            a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
+                                     "adset": r.get("adset_name"),
+                                     "spend": 0.0, "leads": 0,
+                                     "imp": 0.0, "clicks": 0.0, "reach": 0.0})
+            if r.get("adset_name"): a["adset"] = r.get("adset_name")   # завжди свіжа назва
+            a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
+            a["imp"]   += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
+            a["reach"] += num(r.get("reach"))
 
-    agg = {}
-    for r in rows:
-        if not acct_ok(r): continue
-        kind, m = classify(r.get("campaign"))
-        if kind != "lead" or m is None: continue
-        aid = str(r.get("adset_id") or "")
-        if not aid or aid not in active: continue
-        a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
-                                 "adset": r.get("adset_name"),
-                                 "spend": 0.0, "leads": 0,
-                                 "imp": 0.0, "clicks": 0.0, "reach": 0.0})
-        if r.get("adset_name"): a["adset"] = r.get("adset_name")   # завжди свіжа назва
-        a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
-        a["imp"]   += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
-        a["reach"] += num(r.get("reach"))
+        # якість лідів по ад-сетах: ліди періоду -> ад-сет ПО adset_id (не по назві!)
+        qmap = {}   # adset_id -> {leads,bad,noresp,book}
+        for mgr in (raw_ok if bk else []):
+            for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
+                if not _in_period(L["cd"], dfrom, dto):
+                    continue
+                hit = raw_map.get(L["ph"])
+                if not hit or hit["m"] != mgr or not hit["adset_id"]:
+                    continue
+                q = qmap.setdefault(hit["adset_id"], {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
+                q["leads"] += 1
+                if L["bad"]: q["bad"] += 1
+                if L["nr"]:  q["noresp"] += 1
+                if L["bk"]:  q["book"] += 1
 
-    # якість лідів по ад-сетах: ліди за 7 днів -> ад-сет ПО adset_id (не по назві!)
-    qmap = {}   # adset_id -> {leads,bad,noresp,book}
-    for mgr in raw_ok:
-        for L in (bk.get(mgr, {}) or {}).get("leads7d", []):
-            hit = raw_map.get(L["ph"])
-            if not hit or hit["m"] != mgr or not hit["adset_id"]:
-                continue
-            q = qmap.setdefault(hit["adset_id"], {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
-            q["leads"] += 1
-            if L["bad"]: q["bad"] += 1
-            if L["nr"]:  q["noresp"] += 1
-            if L["bk"]:  q["book"] += 1
-
-    out = []
-    for aid, a in agg.items():
-        m = a["m"]; sp = round(a["spend"], 2); ld = a["leads"]
-        rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
-        q = qmap.get(aid) if m in raw_ok else None
-        book = q["book"] if q else None
-        out.append({"m": m, "campaign": a["campaign"], "adset": a["adset"],
-                    "spend": sp, "leads": ld,
-                    "cpl": round(sp / ld, 2) if ld else None,
-                    "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"],
-                    "book": book,
-                    "cpa": round(sp / book, 2) if book else None,
-                    "q": q})
-    out.sort(key=lambda x: -(x["spend"] or 0))
-    print("  ад-сети: %d активних, якість є для %d" % (len(out), sum(1 for x in out if x["q"])))
+        res = []
+        for aid, a in agg.items():
+            m = a["m"]; sp = round(a["spend"], 2); ld = a["leads"]
+            rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
+            q = qmap.get(aid) if m in raw_ok else None
+            book = q["book"] if q else None
+            res.append({"m": m, "campaign": a["campaign"], "adset": a["adset"],
+                        "spend": sp, "leads": ld,
+                        "cpl": round(sp / ld, 2) if ld else None,
+                        "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"],
+                        "book": book,
+                        "cpa": round(sp / book, 2) if book else None,
+                        "q": q})
+        res.sort(key=lambda x: -(x["spend"] or 0))
+        out[key] = res
+        print("  ад-сети [%-5s]: %d активних, якість є для %d"
+              % (key, len(res), sum(1 for x in res if x["q"])))
     return out
 
-def build_creatives(d7from, yest_s, bk, raw_map, raw_ok):
-    """Свіжі креативи за 7 днів, тільки АКТИВНІ (витрати > 0 вчора/сьогодні)."""
-    ads = windsor("facebook",
-                  ["account_id", "campaign", "adset_name", "ad_id", "ad_name", "spend",
-                   "impressions", "clicks", "reach", "actions_lead"], d7from, TODAY)
-    recent = windsor("facebook", ["account_id", "ad_id", "spend"], yest_s, TODAY)
-    active = set()
-    for r in recent:
-        if acct_ok(r) and num(r.get("spend")) > 0:
-            active.add(str(r.get("ad_id") or ""))
+def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
+    """Креативи ПО КОЖНОМУ ПЕРІОДУ, тільки АКТИВНІ (витрати > 0 вчора/сьогодні).
+    Повертає {period_key: [рядки]}."""
+    active = _active_ids("ad_id", yest_s)
+    out = {}
+    for key, (dfrom, dto) in periods.items():
+        try:
+            ads = windsor("facebook",
+                          ["account_id", "campaign", "adset_name", "ad_id", "ad_name", "spend",
+                           "impressions", "clicks", "reach", "actions_lead"], dfrom, dto)
+        except Exception as e:
+            print("  creatives period FAIL", key, "->", e); continue
+        agg = {}
+        for r in ads:
+            if not acct_ok(r): continue
+            kind, m = classify(r.get("campaign"))
+            if kind != "lead" or m is None: continue
+            aid = str(r.get("ad_id") or "")
+            if not aid or aid not in active: continue
+            a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
+                                     "adset": r.get("adset_name"), "ad": r.get("ad_name"),
+                                     "spend": 0.0, "leads": 0,
+                                     "imp": 0.0, "clicks": 0.0, "reach": 0.0})
+            if r.get("ad_name"):    a["ad"]    = r.get("ad_name")      # завжди свіжі назви
+            if r.get("adset_name"): a["adset"] = r.get("adset_name")
+            a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
+            a["imp"]   += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
+            a["reach"] += num(r.get("reach"))
 
-    agg = {}
-    for r in ads:
-        if not acct_ok(r): continue
-        kind, m = classify(r.get("campaign"))
-        if kind != "lead" or m is None: continue
-        aid = str(r.get("ad_id") or "")
-        if not aid or aid not in active: continue
-        a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
-                                 "adset": r.get("adset_name"), "ad": r.get("ad_name"),
-                                 "spend": 0.0, "leads": 0,
-                                 "imp": 0.0, "clicks": 0.0, "reach": 0.0})
-        if r.get("ad_name"):    a["ad"]    = r.get("ad_name")      # завжди свіжі назви
-        if r.get("adset_name"): a["adset"] = r.get("adset_name")
-        a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
-        a["imp"]   += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
-        a["reach"] += num(r.get("reach"))
+        # записи періоду -> креатив ПО ad_id (не по назві!)
+        bmap = {}   # ad_id -> book count
+        for mgr in (raw_ok if bk else []):
+            for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
+                if not L["bk"] or not _in_period(L["cd"], dfrom, dto):
+                    continue
+                hit = raw_map.get(L["ph"])
+                if hit and hit["m"] == mgr and hit["ad_id"]:
+                    bmap[hit["ad_id"]] = bmap.get(hit["ad_id"], 0) + 1
 
-    out = []
-    for aid, a in agg.items():
-        m = a["m"]; sp = round(a["spend"], 2); ld = a["leads"]
-        rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
-        book = None
-        if m in raw_ok and bk and m in bk:
-            book = 0
-            for ph in bk[m].get("booked7d_phones", []):
-                hit = raw_map.get(ph)
-                if hit and hit["m"] == m and hit["ad_id"] == aid:   # по ad_id, не по назві
-                    book += 1
-        out.append({"m": m, "name": a["ad"], "adset": a["adset"], "campaign": a["campaign"],
-                    "spend": sp, "leads": ld,
-                    "cpl":  round(sp / ld, 2) if ld else None,
-                    "book": book,
-                    "cpa":  round(sp / book, 2) if book else None,
-                    "conv": round(book / ld * 100, 1) if (book is not None and ld) else None,
-                    "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"]})
-    out.sort(key=lambda c: (c["cpa"] if c["cpa"] is not None else 1e9))
-    print("  creatives: %d активних" % len(out))
+        res = []
+        for aid, a in agg.items():
+            m = a["m"]; sp = round(a["spend"], 2); ld = a["leads"]
+            rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
+            book = bmap.get(aid, 0) if (m in raw_ok and bk and m in bk) else None
+            res.append({"m": m, "name": a["ad"], "adset": a["adset"], "campaign": a["campaign"],
+                        "spend": sp, "leads": ld,
+                        "cpl":  round(sp / ld, 2) if ld else None,
+                        "book": book,
+                        "cpa":  round(sp / book, 2) if book else None,
+                        "conv": round(book / ld * 100, 1) if (book is not None and ld) else None,
+                        "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"]})
+        res.sort(key=lambda c: (c["cpa"] if c["cpa"] is not None else 1e9))
+        out[key] = res
+        print("  creatives [%-5s]: %d активних" % (key, len(res)))
     return out
 
 # ---------------- MAIN ----------------
@@ -545,14 +566,15 @@ def main():
                     new_base_old[m] = sorted(old_now)
         out["_baseline"] = {"date": TODAY, "old": new_base_old}
 
-    # --- Meta-метрики по періодах (CTR / CPM / частота) + свіжі креативи ---
+    # --- Meta-метрики по періодах (CTR / CPM / частота) + ад-сети й креативи по періодах ---
     td = datetime.date.fromisoformat(TODAY)
     yest_s = (td - datetime.timedelta(days=1)).isoformat()
     d7from = (td - datetime.timedelta(days=6)).isoformat()
     mstart = td.replace(day=1).isoformat()
+    PERIODS = {"yest": (yest_s, yest_s), "d7": (d7from, TODAY),
+               "month": (mstart, TODAY), "all": (DATE_FROM, TODAY)}
     try:
-        pm = period_metrics({"yest": (yest_s, yest_s), "d7": (d7from, TODAY),
-                             "month": (mstart, TODAY), "all": (DATE_FROM, TODAY)})
+        pm = period_metrics(PERIODS)
         for m, node in out["managers"].items():
             if m in pm:
                 node["m"] = pm[m]
@@ -564,18 +586,24 @@ def main():
     except Exception as e:
         print("raw map failed:", e); raw_map, raw_ok = {}, []
 
+    def _merge_periods(field, fresh):
+        """Свіжі періоди поверх старих: період, що не отримався, лишається зі
+        старими даними (той самий принцип «ніколи не зануляти на помилці»)."""
+        if not fresh:
+            print(field, "failed entirely -> carrying over old ones"); return
+        prev = out.get(field)
+        if isinstance(prev, dict):        # старий формат (list) просто замінюємо
+            merged = dict(prev); merged.update(fresh); fresh = merged
+        out[field] = fresh
+
     try:
-        cr = build_creatives(d7from, yest_s, bk, raw_map, raw_ok)
-        if cr:
-            out["creatives"] = cr
-            out["creativesPeriod"] = "останні 7 днів, тільки активні"
+        _merge_periods("creatives", build_creatives(PERIODS, yest_s, bk, raw_map, raw_ok))
+        out["creativesPeriod"] = "по періодах, тільки активні"
     except Exception as e:
         print("creatives failed -> carrying over old ones:", e)
 
     try:
-        ads_ = build_adsets(d7from, yest_s, bk, raw_map, raw_ok)
-        if ads_:
-            out["adsets"] = ads_
+        _merge_periods("adsets", build_adsets(PERIODS, yest_s, bk, raw_map, raw_ok))
     except Exception as e:
         print("adsets failed:", e)
 
