@@ -14,7 +14,8 @@ Everything is defensive: if the sheet step fails, bookings are carried over from
 existing data.json and the Meta refresh still commits. Bookings are never zeroed on error.
 
 Env vars (GitHub Actions secrets):
-  WINDSOR_API_KEY  -> Meta ads
+  WINDSOR_API_KEY  -> Meta ads (fallback, поки живий тариф Windsor)
+  META_TOKEN       -> токен Meta Marketing API (60 днів); якщо заданий — Meta йде НАПРЯМУ
   SHEETS_URL       -> https://script.google.com/macros/s/.../exec
   SHEETS_KEY       -> shared secret checked by the bridge
 Reads/writes ./data.json.
@@ -33,6 +34,8 @@ SHEETS_URL = _clean_secret("SHEETS_URL")
 if SHEETS_URL.endswith("/exec/"):
     SHEETS_URL = SHEETS_URL[:-1]
 SHEETS_KEY = _clean_secret("SHEETS_KEY")
+META_TOKEN = _clean_secret("META_TOKEN")
+GRAPH_API  = "https://graph.facebook.com/v21.0"
 ACCOUNT   = "873265084670144"
 DATE_FROM = "2026-06-20"
 TODAY     = datetime.date.today().isoformat()
@@ -40,7 +43,28 @@ DATA_FILE = "data.json"
 TZ        = datetime.timezone(datetime.timedelta(hours=2))
 
 LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Alissa",
-           "Саида": "Saida", "Даша": "Dasha"}
+           "Саида": "Saida", "Даша": "Dasha", "Юлиана": "Barcelona"}
+
+# Нові менеджери: вузол у data.json створюється автоматично при першому запуску
+MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "2026-07-09"}}
+
+# --- ROAS: середній чек (записи x чек / витрати; оцінка, бо запис != оплачена процедура) ---
+# Курси до USD (валюта кабінету) — константи, онови за потреби.
+EUR_USD = 1.17
+CZK_USD = 0.047
+AVG_CHECK = {   # (сума, валюта). Париж — ціна оферу в кампанії; Прага — «модельна» ціна.
+    "Диана": (3990, "CZK"), "Даша": (3990, "CZK"),
+    "Таня": (199, "EUR"), "Алиса": (159, "EUR"), "Саида": (159, "EUR"),
+    # "Юлиана": (?, "EUR"),   # чек Барселони Ірина ще не дала — ROAS поки не показуємо
+}
+
+def check_usd_node(m):
+    v = AVG_CHECK.get(m)
+    if not v:
+        return None
+    amt, cur = v
+    rate = {"EUR": EUR_USD, "CZK": CZK_USD, "USD": 1.0}[cur]
+    return {"amount": amt, "cur": cur, "usd": round(amt * rate, 2)}
 
 # Google Sheet manager tabs, read through the Apps Script bridge (gid = tab id in the sheet).
 # If a tab can't be read, that manager's fetch fails softly and her bookings are carried over.
@@ -65,6 +89,60 @@ def windsor(connector, fields, dfrom=None, dto=None, flt=None):
     if flt:   q += "&filter=%s"    % urllib.parse.quote(json.dumps(flt))
     payload = http_json("https://connectors.windsor.ai/%s?%s" % (connector, q))
     return payload.get("data") or payload.get("result") or []
+
+def graph_rows(fields, dfrom, dto):
+    """Meta Marketing API insights -> рядки У ФОРМАТІ WINDSOR (ті самі ключі),
+    щоб решта коду не змінювалась. level виводиться з полів; 'date' у полях =
+    розбивка по днях (time_increment=1). БЕЗ 'date' — суми за період, тоді
+    reach/frequency коректні (грабля: частоту не можна сумувати по днях)."""
+    level = "ad" if "ad_id" in fields else ("adset" if "adset_id" in fields else "campaign")
+    daily = "date" in fields
+    api_fields = ["campaign_name", "spend", "impressions", "clicks", "reach", "actions"]
+    if level in ("adset", "ad"):
+        api_fields += ["adset_id", "adset_name"]
+    if level == "ad":
+        api_fields += ["ad_id", "ad_name"]
+    params = {"level": level, "fields": ",".join(api_fields),
+              "time_range": json.dumps({"since": dfrom, "until": dto}),
+              "limit": "500", "access_token": META_TOKEN}
+    if daily:
+        params["time_increment"] = "1"
+    url = "%s/act_%s/insights?%s" % (GRAPH_API, ACCOUNT, urllib.parse.urlencode(params))
+    out = []
+    while url:
+        try:
+            payload = http_json(url)
+        except urllib.error.HTTPError as e:
+            body = ""
+            try: body = e.read().decode("utf-8", "replace")[:300]
+            except Exception: pass
+            raise RuntimeError("graph HTTP %s: %s" % (e.code, body))
+        for r in payload.get("data", []):
+            leads = 0
+            for a in (r.get("actions") or []):
+                if a.get("action_type") == "lead":
+                    leads += int(float(a.get("value") or 0))
+            row = {"account_id": ACCOUNT, "campaign": r.get("campaign_name"),
+                   "spend": r.get("spend"), "impressions": r.get("impressions"),
+                   "clicks": r.get("clicks"), "reach": r.get("reach"),
+                   "actions_lead": leads,
+                   "adset_id": r.get("adset_id"), "adset_name": r.get("adset_name"),
+                   "ad_id": r.get("ad_id"), "ad_name": r.get("ad_name")}
+            if daily:
+                row["date"] = r.get("date_start")
+            out.append(row)
+        url = (payload.get("paging") or {}).get("next")
+    return out
+
+def meta_rows(fields, dfrom, dto):
+    """Одна точка доступу до Meta: Graph API напряму (якщо є META_TOKEN),
+    інакше Windsor. Формат рядків однаковий."""
+    if META_TOKEN:
+        try:
+            return graph_rows(fields, dfrom, dto)
+        except Exception as e:
+            print("  graph FAIL -> windsor:", str(e)[:200])
+    return windsor("facebook", fields, dfrom, dto)
 
 def phone9(p):
     d = "".join(c for c in str(p or "") if c.isdigit())
@@ -99,8 +177,18 @@ def classify(campaign):
     return (None, None)
 
 def fetch_meta():
+    if META_TOKEN:
+        try:
+            rows = graph_rows(["date", "account_id", "campaign", "spend", "actions_lead"],
+                              DATE_FROM, TODAY)
+            if rows:
+                print("meta source: GRAPH API | rows:", len(rows))
+                return rows
+            print("graph api returned 0 rows -> falling back to windsor")
+        except Exception as e:
+            print("graph api failed -> falling back to windsor:", str(e)[:300])
     if not API_KEY:
-        sys.exit("ERROR: WINDSOR_API_KEY is not set")
+        sys.exit("ERROR: no META_TOKEN worked and WINDSOR_API_KEY is not set")
     fields = "date,account_id,campaign,spend,actions_lead"
     last_err = None
     for connector in ("facebook", "all"):
@@ -152,6 +240,7 @@ def is_booked(r):
 #               -> це НЕ вина менеджера, це якість трафіку: креатив/офер тягне незацікавлених
 # ЛІКВІД      = все інше (діалог, думає, відмова, запис) — людина реально відреагувала
 BAD_KW    = ["не из париж", "не из праг", "не з париж", "не з праг", "не из город",
+             "не из барсел", "не з барсел",
              "номер не существует", "нет ватсап", "нет whatsapp", "повтор номера"]
 NORESP_KW = ["не прочитано", "игнор", "не взял", "не отвеч", "не отв",
              "не вышел в диалог", "не вышла в диалог"]
@@ -186,15 +275,21 @@ def _strip_id_prefix(v):
 
 _SHEET_CACHE = {}
 
-def fetch_sheet_rows(gid):
-    """Читає вкладку через Apps Script-міст. Повертає список dict-ів з нормалізованими
-    ключами заголовків — тобто те саме, що раніше віддавав Windsor."""
-    if gid in _SHEET_CACHE:
-        return _SHEET_CACHE[gid]
+def fetch_sheet_rows(gid=None, ss=None, sheet=None):
+    """Читає вкладку через Apps Script-міст (за gid або за НАЗВОЮ вкладки, з
+    будь-якої таблиці, до якої Ірина має доступ). Повертає список dict-ів з
+    нормалізованими ключами заголовків — тобто те саме, що раніше віддавав Windsor."""
+    ss = ss or SHEET_ID
+    ck = (ss, gid, sheet)
+    if ck in _SHEET_CACHE:
+        return _SHEET_CACHE[ck]
     if not SHEETS_URL or not SHEETS_KEY:
         raise RuntimeError("SHEETS_URL / SHEETS_KEY не задані")
-    url = "%s?key=%s&ss=%s&gid=%s" % (SHEETS_URL, urllib.parse.quote(SHEETS_KEY),
-                                      SHEET_ID, gid)
+    url = "%s?key=%s&ss=%s" % (SHEETS_URL, urllib.parse.quote(SHEETS_KEY), ss)
+    if sheet:
+        url += "&sheet=%s" % urllib.parse.quote(sheet)
+    else:
+        url += "&gid=%s" % gid
     try:
         payload = http_json(url)           # Apps Script віддає 302 -> urllib йде за ним сам
     except urllib.error.HTTPError as e:
@@ -216,10 +311,122 @@ def fetch_sheet_rows(gid):
             if h and i < len(raw):
                 d[h] = raw[i]
         rows.append(d)
-    _SHEET_CACHE[gid] = rows
+    _SHEET_CACHE[ck] = rows
     return rows
 
-def compute_bookings():
+# ---------------- БАРСЕЛОНА (Юлиана) ----------------
+# Окрема таблиця. Вкладка Віри = статуси; сирі вкладки фб3/fb. = атрибуція (ad_id).
+# ⚠️ У вкладці Віри «таргетолог» стоїть «Вера» НАВІТЬ у лідів Ірини, тому фільтр
+# «Ирина або порожньо» тут не працює. Ліди Ірини визначаємо через сирі вкладки
+# по НАЗВІ КАМПАНІЇ: "Yaliana" (кампанії Віри звуться "Yuliana" — інша буква,
+# і крутяться в чужому кабінеті). Нові кампанії Барселони мають містити
+# "Yaliana" в назві АБО просто існувати в кабінеті Ірини (barca_camps).
+BARCA_SS        = "1yabb6jwu15n8N9CBTdWk3ypzvc6mkldclpAu5nNpVVg"
+BARCA_VERA_GID  = "190303918"        # вкладка «Юлиана Вера 2» (статуси)
+BARCA_RAW_SHEETS = ("фб3", "fb.")    # сирі вкладки з ad_id (ліди задвоєні між ними — дедуп по телефону)
+BARCA_CAMP_KW   = ("yaliana",)
+BARCA_MGR       = "Юлиана"
+
+def _barca_phone(r):
+    # телефон лежить то в número_de_teléfono, то в phone_number — беремо що є
+    return r.get("número_de_teléfono") or r.get("phone_number")
+
+def fetch_barcelona_raw(extra_camps=frozenset()):
+    """{phone9: {m, ad_id, adset_id, ad, adset}} — ліди Ірини з сирих вкладок Барселони."""
+    out = {}
+    for name in BARCA_RAW_SHEETS:
+        for r in fetch_sheet_rows(ss=BARCA_SS, sheet=name):
+            camp = str(r.get("campaign_name") or "")
+            cl = camp.lower()
+            if not (any(k in cl for k in BARCA_CAMP_KW) or (camp and camp in extra_camps)):
+                continue
+            ph = phone9(_barca_phone(r))
+            if not ph:
+                continue
+            out[ph] = {"m": BARCA_MGR,
+                       "ad_id": _strip_id_prefix(r.get("ad_id")),
+                       "adset_id": _strip_id_prefix(r.get("adset_id")),
+                       "ad": str(r.get("ad_name") or ""),
+                       "adset": str(r.get("adset_name") or "")}
+    return out
+
+def _iryna_row(r):
+    t = str(r.get("таргетолог") or "").strip().lower()
+    return ("ирина" in t) or t == ""
+
+def _tally_manager(rows, today, phone_of, row_ok):
+    """Акумулює метрики одного менеджера. phone_of(r) -> сирий телефон
+    (для дедупу і join), row_ok(r) -> чи рахуємо цей лід як лід Ірини."""
+    seen = {}
+    for r in rows:
+        seen[(str(phone_of(r)), str(r.get("created_time")))] = r
+    yest = today - datetime.timedelta(days=1)
+    month_start = today.replace(day=1)
+    booked = b7 = b1 = leads = 0
+    bY = bM = 0                         # bookings among leads created yesterday / this month
+    old_keys = []                       # keys of booked leads created BEFORE today
+    # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
+    Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "all")}
+    leadsQ = []   # усі мої ліди з телефоном: дата + прапорці (для таблиць ад-сетів/креативів по періодах)
+
+    for k, r in seen.items():
+        if not row_ok(r):
+            continue
+        leads += 1
+        ct = str(r.get("created_time") or "")[:10]
+        try:
+            cd = datetime.date.fromisoformat(ct)
+        except Exception:
+            cd = None
+
+        bk = is_booked(r)
+        bd = (not bk) and is_bad(r)
+        nr = (not bk) and (not bd) and is_noresp(r)
+
+        buckets = ["all"]
+        if cd:
+            if cd == yest: buckets.append("yest")
+            if 0 <= (today - cd).days < 7: buckets.append("d7")
+            if cd >= month_start: buckets.append("month")
+        for p in buckets:
+            Q[p]["leads"] += 1
+            if bd: Q[p]["bad"] += 1
+            if nr: Q[p]["noresp"] += 1
+
+        ph = phone9(phone_of(r))
+        if ph:
+            leadsQ.append({"ph": ph, "cd": cd.isoformat() if cd else "",
+                           "bk": bk, "bad": bd, "nr": nr})
+
+        if bk:
+            booked += 1
+            if cd:
+                if 0 <= (today - cd).days < 7:
+                    b7 += 1
+                if cd == yest: bY += 1
+                if cd >= month_start: bM += 1
+                if cd == today:
+                    b1 += 1
+                elif cd < today:
+                    old_keys.append("%s|%s" % (k[0], k[1]))
+            else:
+                old_keys.append("%s|%s" % (k[0], k[1]))   # unknown date -> treat as old
+
+    return {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
+            "bookingsYest": bY, "bookingsMonth": bM,
+            "leads_seen": leads, "old_keys": old_keys, "q": Q,
+            "leadsQ": leadsQ}
+
+def _print_mgr(mgr, v):
+    qa = v["q"]["all"]; ql = qa["leads"] or 1
+    liq = qa["leads"] - qa["bad"] - qa["noresp"]
+    print("  sheet %-6s iryna %-4d | booked %-3d 7d %-3d yest %-2d | нецільові %d (%.0f%%)  без реакції %d (%.0f%%)  ліквід %d (%.0f%%)"
+          % (mgr, v["leads_seen"], v["bookings"], v["bookings7d"], v["bookingsYest"],
+             qa["bad"],    100.0 * qa["bad"]    / ql,
+             qa["noresp"], 100.0 * qa["noresp"] / ql,
+             liq,          100.0 * liq          / ql))
+
+def compute_bookings(barca_camps=frozenset()):
     """Return {manager: {bookings,bookings7d,bookings1d,leads_seen}} or None on total failure."""
     today = datetime.date.fromisoformat(TODAY)
     res = {}
@@ -228,73 +435,24 @@ def compute_bookings():
             rows = fetch_sheet_rows(gid)
         except Exception as e:
             print("  sheet FAIL", mgr, gid, "->", e); continue
-        seen = {}
-        for r in rows:
-            seen[(str(r.get("phone_number")), str(r.get("created_time")))] = r
-        yest = today - datetime.timedelta(days=1)
-        month_start = today.replace(day=1)
-        booked = b7 = b1 = leads = 0
-        bY = bM = 0                         # bookings among leads created yesterday / this month
-        old_keys = []                       # keys of booked leads created BEFORE today
-        # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
-        Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "all")}
-        leadsQ = []   # усі мої ліди з телефоном: дата + прапорці (для таблиць ад-сетів/креативів по періодах)
+        res[mgr] = _tally_manager(rows, today,
+                                  lambda r: r.get("phone_number"), _iryna_row)
+        _print_mgr(mgr, res[mgr])
 
-        for k, r in seen.items():
-            t = str(r.get("таргетолог") or "").strip().lower()
-            if not (("ирина" in t) or t == ""):
-                continue
-            leads += 1
-            ct = str(r.get("created_time") or "")[:10]
-            try:
-                cd = datetime.date.fromisoformat(ct)
-            except Exception:
-                cd = None
-
-            bk = is_booked(r)
-            bd = (not bk) and is_bad(r)
-            nr = (not bk) and (not bd) and is_noresp(r)
-
-            buckets = ["all"]
-            if cd:
-                if cd == yest: buckets.append("yest")
-                if 0 <= (today - cd).days < 7: buckets.append("d7")
-                if cd >= month_start: buckets.append("month")
-            for p in buckets:
-                Q[p]["leads"] += 1
-                if bd: Q[p]["bad"] += 1
-                if nr: Q[p]["noresp"] += 1
-
-            ph = phone9(r.get("phone_number"))
-            if ph:
-                leadsQ.append({"ph": ph, "cd": cd.isoformat() if cd else "",
-                               "bk": bk, "bad": bd, "nr": nr})
-
-            if bk:
-                booked += 1
-                if cd:
-                    if 0 <= (today - cd).days < 7:
-                        b7 += 1
-                    if cd == yest: bY += 1
-                    if cd >= month_start: bM += 1
-                    if cd == today:
-                        b1 += 1
-                    elif cd < today:
-                        old_keys.append("%s|%s" % (k[0], k[1]))
-                else:
-                    old_keys.append("%s|%s" % (k[0], k[1]))   # unknown date -> treat as old
-
-        res[mgr] = {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
-                    "bookingsYest": bY, "bookingsMonth": bM,
-                    "leads_seen": leads, "old_keys": old_keys, "q": Q,
-                    "leadsQ": leadsQ}
-        qa = Q["all"]; ql = qa["leads"] or 1
-        liq = qa["leads"] - qa["bad"] - qa["noresp"]
-        print("  sheet %-6s iryna %-4d | booked %-3d 7d %-3d yest %-2d | нецільові %d (%.0f%%)  без реакції %d (%.0f%%)  ліквід %d (%.0f%%)"
-              % (mgr, leads, booked, b7, bY,
-                 qa["bad"],    100.0 * qa["bad"]    / ql,
-                 qa["noresp"], 100.0 * qa["noresp"] / ql,
-                 liq,          100.0 * liq          / ql))
+    # Барселона: ліди Ірини = телефони з сирих вкладок її кампаній (Yaliana)
+    try:
+        ya = fetch_barcelona_raw(barca_camps)
+        if ya:
+            rows = fetch_sheet_rows(gid=BARCA_VERA_GID, ss=BARCA_SS)
+            phones = set(ya)
+            res[BARCA_MGR] = _tally_manager(
+                rows, today, _barca_phone,
+                lambda r: phone9(_barca_phone(r)) in phones)
+            _print_mgr(BARCA_MGR, res[BARCA_MGR])
+        else:
+            print("  барселона: у сирих вкладках немає лідів Ірини (Yaliana)")
+    except Exception as e:
+        print("  барселона FAIL ->", e)
     return res or None
 
 # ---------------- META: метрики по періодах + свіжі креативи ----------------
@@ -315,9 +473,8 @@ def period_metrics(periods):
     out = {}
     for key, (dfrom, dto) in periods.items():
         try:
-            rows = windsor("facebook",
-                           ["account_id", "campaign", "spend", "impressions", "clicks", "reach"],
-                           dfrom, dto)
+            rows = meta_rows(["account_id", "campaign", "spend", "impressions", "clicks", "reach"],
+                             dfrom, dto)
         except Exception as e:
             print("  meta period FAIL", key, "->", e); continue
         agg = {}
@@ -332,7 +489,7 @@ def period_metrics(periods):
             out.setdefault(m, {})[key] = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
     return out
 
-def fetch_raw_map():
+def fetch_raw_map(barca_camps=frozenset()):
     """phone9 -> {m, ad_id, adset_id, ad, adset} із сирих вкладок.
 
     ВАЖЛИВО: зв'язуємо по ID, а не по НАЗВІ. У сирій вкладці лежить назва ад-сета
@@ -359,6 +516,17 @@ def fetch_raw_map():
             print("  сира вкладка %-6s -> %d лідів з ID" % (mgr, n))
         except Exception as e:
             print("  сира вкладка НЕ прочиталась:", mgr, "->", str(e)[:90])
+    # Барселона (окрема таблиця, ліди тільки з кампаній Ірини)
+    try:
+        n = 0
+        for ph, hit in fetch_barcelona_raw(barca_camps).items():
+            if hit["ad_id"]:
+                raw_map[ph] = hit; n += 1
+        if n:
+            raw_ok.append(BARCA_MGR)
+        print("  сира вкладка %-6s -> %d лідів з ID" % (BARCA_MGR, n))
+    except Exception as e:
+        print("  сира вкладка НЕ прочиталась:", BARCA_MGR, "->", str(e)[:90])
     print("  сирі вкладки працюють для:", ", ".join(raw_ok) if raw_ok else "нікого")
     return raw_map, raw_ok
 
@@ -370,7 +538,7 @@ def _active_ids(id_field, yest_s):
     """ID (ад-сетів чи оголошень) з витратами > 0 вчора/сьогодні — «активні».
     Один і той самий набір для всіх періодів, щоб таблиці не розросталися
     від давно вимкнених."""
-    recent = windsor("facebook", ["account_id", id_field, "spend"], yest_s, TODAY)
+    recent = meta_rows(["account_id", id_field, "spend"], yest_s, TODAY)
     return {str(r.get(id_field) or "") for r in recent
             if acct_ok(r) and num(r.get("spend")) > 0}
 
@@ -383,9 +551,8 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
     out = {}
     for key, (dfrom, dto) in periods.items():
         try:
-            rows = windsor("facebook",
-                           ["account_id", "campaign", "adset_id", "adset_name", "spend",
-                            "impressions", "clicks", "reach", "actions_lead"], dfrom, dto)
+            rows = meta_rows(["account_id", "campaign", "adset_id", "adset_name", "spend",
+                              "impressions", "clicks", "reach", "actions_lead"], dfrom, dto)
         except Exception as e:
             print("  ад-сети period FAIL", key, "->", e); continue
         agg = {}
@@ -445,9 +612,8 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
     out = {}
     for key, (dfrom, dto) in periods.items():
         try:
-            ads = windsor("facebook",
-                          ["account_id", "campaign", "adset_name", "ad_id", "ad_name", "spend",
-                           "impressions", "clicks", "reach", "actions_lead"], dfrom, dto)
+            ads = meta_rows(["account_id", "campaign", "adset_name", "ad_id", "ad_name", "spend",
+                             "impressions", "clicks", "reach", "actions_lead"], dfrom, dto)
         except Exception as e:
             print("  creatives period FAIL", key, "->", e); continue
         agg = {}
@@ -506,6 +672,18 @@ def main():
     with open(DATA_FILE, encoding="utf-8") as f:
         cur = json.load(f)
 
+    # нові менеджери (Барселона): створюємо вузол при першому запуску
+    for m, meta in MANAGER_BOOTSTRAP.items():
+        if m not in cur["managers"]:
+            cur["managers"][m] = {"city": meta["city"], "start": meta["start"]}
+            print("новий менеджер у data.json:", m)
+
+    # кампанії Юлианы з кабінету Ірини — додатковий фільтр для сирих вкладок Барселони
+    barca_camps = {str(r.get("campaign") or "") for r in rows
+                   if classify(r.get("campaign")) == ("lead", BARCA_MGR)}
+    if barca_camps:
+        print("кампанії Барселони в кабінеті:", ", ".join(sorted(barca_camps)))
+
     lead_spend = {m: {} for m in cur["managers"]}
     lead_leads = {m: {} for m in cur["managers"]}
     inst_spend = {m: 0.0 for m in cur["managers"]}
@@ -535,10 +713,11 @@ def main():
         node["totalSpend"] = tot_s; node["totalLeads"] = tot_l
         node["avgCpl"] = round(tot_s / tot_l, 2) if tot_l > 0 else None
         node["instSpend"] = round(inst_spend[m], 2)
+        node["check"] = check_usd_node(m)   # середній чек для ROAS (None = не показуємо)
 
     # Bookings from the sheet (defensive: keep carried values on any problem)
     try:
-        bk = compute_bookings()
+        bk = compute_bookings(barca_camps)
     except Exception as e:
         print("BOOKINGS step failed entirely -> carrying over:", e); bk = None
     if bk:
@@ -582,7 +761,7 @@ def main():
         print("period metrics failed -> skipping:", e)
 
     try:
-        raw_map, raw_ok = fetch_raw_map()
+        raw_map, raw_ok = fetch_raw_map(barca_camps)
     except Exception as e:
         print("raw map failed:", e); raw_map, raw_ok = {}, []
 
