@@ -67,7 +67,7 @@ tr:hover td{background:var(--card2)}
 <div class="chartbox"><h3>Ліди по днях</h3><canvas id="leadsChart"></canvas></div>
 <div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
 
-<h2>Ад-сети (аудиторія · гео)</h2>
+<h2 id="asTitle">Ад-сети (аудиторія · гео)</h2>
 <div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно.</div>
 <div style="overflow-x:auto"><table id="asTable">
 <thead><tr><th>Ад-сет · кампанія</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Нецільові</th><th>Без реакції</th><th>Записи</th><th>CPA</th></tr></thead>
@@ -93,7 +93,6 @@ Chart.defaults.color='#8b96ab';Chart.defaults.borderColor='#2a3550';
 
 fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   document.getElementById('updated').textContent='Оновлено: '+new Date(D.updated).toLocaleString('uk-UA')+' · '+D.periodNote;
-  document.getElementById('crTitle').textContent='Креативи ('+D.creativesPeriod+')';
 
   const M=D.managers;
   const allDates=[...new Set(Object.values(M).flatMap(m=>m.dates))].sort();
@@ -115,20 +114,32 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
 
   // ---- періоди ----
   const P={
-    yest:{label:'Вчора',qk:'yest',hint:`Повний закритий день — ${dd(yest)}. Найчесніші цифри для рішень.`,
+    yest:{label:'Вчора',qk:'yest',range:dd(yest),
+          hint:`Повний закритий день — ${dd(yest)}. Найчесніші цифри для рішень.`,
           pred:d=>d===yest, bk:m=>m.bookingsYest??0,
           extra:m=>`<div class="row"><span class="l">Дата</span><b>${dd(yest)}</b></div>`},
-    d7:{label:'7 днів',qk:'d7',hint:`${dd(d7from)} – ${dd(today)} (включно з неповним сьогодні).`,
+    d7:{label:'7 днів',qk:'d7',range:`${dd(d7from)} – ${dd(today)}`,
+          hint:`${dd(d7from)} – ${dd(today)} (включно з неповним сьогодні).`,
           pred:d=>d>=d7from, bk:m=>m.bookings7d??0,
           extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d7from).length}</b></div>`},
-    month:{label:monthName,qk:'month',hint:`Календарний місяць — те, що йде у звіт для керівництва.`,
+    month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(today)}`,
+          hint:`Календарний місяць — те, що йде у звіт для керівництва.`,
           pred:d=>d.startsWith(monthPref), bk:m=>m.bookingsMonth??0,
           extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(monthPref)).length}</b></div>`},
-    all:{label:'Весь час',qk:'all',hint:`Від старту кожного менеджера. Періоди різні — порівнювати менеджерів між собою тут не можна.`,
+    all:{label:'Весь час',qk:'all',range:`${dd(allDates[0])} – ${dd(today)}`,
+          hint:`Від старту кожного менеджера. Періоди різні — порівнювати менеджерів між собою тут не можна.`,
           pred:d=>true, bk:m=>m.bookings??0,
           extra:m=>(m.instSpend?`<div class="row"><span class="l">+ Instagram (Direct)</span><b>${fmt(m.instSpend)}</b></div>`:'')+
                    `<div class="row"><span class="l">З</span><b>${dd(m.start)}</b></div>`}
   };
+
+  // Ад-сети/креативи: новий формат — {yest:[],d7:[],month:[],all:[]}.
+  // Старий data.json (до першого автооновлення) містить простий масив за 7 днів —
+  // тоді показуємо його в усіх періодах з попередженням.
+  const oldFmt=Array.isArray(D.adsets)||Array.isArray(D.creatives);
+  const normP=x=>Array.isArray(x)?{yest:x,d7:x,month:x,all:x}:(x||{});
+  const AS=normP(D.adsets), CR=normP(D.creatives);
+  const OLDFMT_NOTE='⚠️ Дані таблиці поки за останні 7 днів (старий формат) — перемикання періодів запрацює після наступного автооновлення (до 2 год). ';
 
   // якість трафіку: нецільові (гео/сміття) · без реакції (людина не відповіла) · ліквід (вийшли на контакт)
   const qualityRows=(m,p,sp,ld)=>{
@@ -175,7 +186,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       }
     }
     // ад-сети: тут ловиться таргетинг (гео/радіус) — те, що не видно на рівні креативу
-    for(const a of (D.adsets||[])){
+    for(const a of (AS[k]||[])){
       const q=a.q;
       if(q&&q.leads>=5){
         const bR=Math.round(q.bad/q.leads*100);
@@ -188,7 +199,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       if(a.spend>=5&&a.leads===0)
         A.push(['bad',`Ад-сет <b>${a.adset}</b> (${a.m}): витрачено <b>${fmt(a.spend)}</b>, <b>0 лідів</b>.`]);
     }
-    for(const c of (D.creatives||[])){
+    for(const c of (CR[k]||[])){
       if(c.freq!=null&&c.freq>=2.5)
         A.push(['bad',`Креатив <b>${c.name}</b> · ${c.adset} (${c.m}): частота <b>${c.freq}</b> — вигорів.`]);
       if(c.spend>=5&&c.leads===0)
@@ -224,7 +235,73 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         ${p.extra(m)}
       </div>`);
     }
+    renderAdsets(k);
+    renderCreatives(k);
   }
+
+  // ---- ад-сети (по періодах) ----
+  const asb=document.querySelector('#asTable tbody');
+  const pct=(n,d)=>d?Math.round(n/d*100):null;
+  function renderAdsets(k){
+    const p=P[k], list=AS[k]||[];
+    document.getElementById('asTitle').textContent=`Ад-сети (аудиторія · гео) — ${p.label} · ${p.range}`;
+    asb.innerHTML='';
+    for(const a of list){
+      const q=a.q, fcls=a.freq==null?'':(a.freq>=2.5?'r':a.freq>=1.8?'y':'g');
+      const bR=q?pct(q.bad,q.leads):null, nR=q?pct(q.noresp,q.leads):null;
+      const bcls=bR==null?'':(bR>=20?'r':bR>=10?'y':'g');
+      const ncls=nR==null?'':(nR>=40?'r':nR>=25?'y':'g');
+      asb.insertAdjacentHTML('beforeend',`<tr>
+        <td>${a.adset}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
+        <td>${a.m}</td><td>${fmt(a.spend)}</td><td>${a.leads}</td><td>${fmt(a.cpl)}</td>
+        <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
+        <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
+        <td>${bR==null?'—*':`<span class="tag ${bcls}">${q.bad} · ${bR}%</span>`}</td>
+        <td>${nR==null?'—*':`<span class="tag ${ncls}">${q.noresp} · ${nR}%</span>`}</td>
+        <td>${a.book==null?'—*':a.book}</td>
+        <td>${a.book==null?'—*':fmt(a.cpa)}</td></tr>`);
+    }
+    const notes=[];
+    if(oldFmt) notes.push(OLDFMT_NOTE);
+    if(!list.length) notes.push('Немає даних за цей період. ');
+    const asMiss=[...new Set(list.filter(a=>!a.q).map(a=>a.m))];
+    if(asMiss.length) notes.push(`* Якість і записи по ад-сетах поки недоступні для: ${asMiss.join(', ')} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
+    notes.push('Показані тільки активні ад-сети (витрати вчора/сьогодні).');
+    document.getElementById('asNote').textContent=notes.join('');
+  }
+
+  // ---- креативи (по періодах) ----
+  const crb=document.querySelector('#crTable tbody');
+  let cpaC=null;
+  function renderCreatives(k){
+    const p=P[k], cr=[...(CR[k]||[])].sort((a,b)=>(a.cpa??1e9)-(b.cpa??1e9));
+    document.getElementById('crTitle').textContent=`Креативи — ${p.label} · ${p.range} (тільки активні)`;
+    if(cpaC) cpaC.destroy();
+    cpaC=new Chart(cpaChart,{type:'bar',data:{labels:cr.map(c=>c.name+' · '+c.m),datasets:[{label:'CPA $',data:cr.map(c=>c.cpa),backgroundColor:cr.map(c=>COLORS[c.m])}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
+    crb.innerHTML='';
+    for(const c of cr){
+      const noBk=(c.book==null);
+      const cls=noBk?'':(c.cpa==null?'r':(c.cpa<8?'g':c.cpa<15?'y':'r'));
+      const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого'));
+      const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
+      crb.insertAdjacentHTML('beforeend',`<tr>
+        <td>${c.name} · ${c.adset}</td><td>${c.m}</td>
+        <td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td>
+        <td>${c.ctr!=null?c.ctr+'%':'—'}</td>
+        <td>${c.freq!=null?`<span class="tag ${fcls}">${c.freq}</span>`:'—'}</td>
+        <td>${noBk?'—*':c.book}</td>
+        <td>${noBk?'—*':`${fmt(c.cpa)} <span class="tag ${cls}">${st}</span>`}</td></tr>`);
+    }
+    const notes=[];
+    if(oldFmt) notes.push(OLDFMT_NOTE);
+    if(!cr.length) notes.push('Немає даних за цей період. ');
+    if(cr.some(c=>c.book==null)){
+      const miss=[...new Set(cr.filter(c=>c.book==null).map(c=>c.m))].join(', ');
+      notes.push(`* Записи/CPA по креативах ще недоступні для: ${miss} — їхні сирі вкладки не прочитались. Підтягнеться саме.`);
+    }
+    document.getElementById('crNote').textContent=notes.join('');
+  }
+
   render('yest');
 
   // ---- графіки ----
@@ -233,56 +310,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   new Chart(leadsChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('leads')},options:{interaction:{mode:'index',intersect:false}}});
   new Chart(spendChart,{type:'line',data:{labels:allDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
 
-  // ---- ад-сети ----
-  const AS=D.adsets||[];
-  const asb=document.querySelector('#asTable tbody');
-  const pct=(n,d)=>d?Math.round(n/d*100):null;
-  for(const a of AS){
-    const q=a.q, fcls=a.freq==null?'':(a.freq>=2.5?'r':a.freq>=1.8?'y':'g');
-    const bR=q?pct(q.bad,q.leads):null, nR=q?pct(q.noresp,q.leads):null;
-    const bcls=bR==null?'':(bR>=20?'r':bR>=10?'y':'g');
-    const ncls=nR==null?'':(nR>=40?'r':nR>=25?'y':'g');
-    asb.insertAdjacentHTML('beforeend',`<tr>
-      <td>${a.adset}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
-      <td>${a.m}</td><td>${fmt(a.spend)}</td><td>${a.leads}</td><td>${fmt(a.cpl)}</td>
-      <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
-      <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
-      <td>${bR==null?'—*':`<span class="tag ${bcls}">${q.bad} · ${bR}%</span>`}</td>
-      <td>${nR==null?'—*':`<span class="tag ${ncls}">${q.noresp} · ${nR}%</span>`}</td>
-      <td>${a.book==null?'—*':a.book}</td>
-      <td>${a.book==null?'—*':fmt(a.cpa)}</td></tr>`);
-  }
-  const asMiss=[...new Set(AS.filter(a=>!a.q).map(a=>a.m))];
-  if(asMiss.length) document.getElementById('asNote').textContent=
-    `* Якість і записи по ад-сетах поки недоступні для: ${asMiss.join(', ')} — їхні сирі вкладки Windsor ще не синхронізував. Підтягнеться саме.`;
-
-  // ---- креативи ----
-  const cr=[...D.creatives].sort((a,b)=>(a.cpa??1e9)-(b.cpa??1e9));
-  new Chart(cpaChart,{type:'bar',data:{labels:cr.map(c=>c.name+' · '+c.m),datasets:[{label:'CPA $',data:cr.map(c=>c.cpa),backgroundColor:cr.map(c=>COLORS[c.m])}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
-  const tb=document.querySelector('#crTable tbody');
-  for(const c of cr){
-    const noBk=(c.book==null);
-    const cls=noBk?'':(c.cpa==null?'r':(c.cpa<8?'g':c.cpa<15?'y':'r'));
-    const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого'));
-    const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
-    tb.insertAdjacentHTML('beforeend',`<tr>
-      <td>${c.name} · ${c.adset}</td><td>${c.m}</td>
-      <td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td>
-      <td>${c.ctr!=null?c.ctr+'%':'—'}</td>
-      <td>${c.freq!=null?`<span class="tag ${fcls}">${c.freq}</span>`:'—'}</td>
-      <td>${noBk?'—*':c.book}</td>
-      <td>${noBk?'—*':`${fmt(c.cpa)} <span class="tag ${cls}">${st}</span>`}</td></tr>`);
-  }
-  if(cr.some(c=>c.book==null)){
-    const miss=[...new Set(cr.filter(c=>c.book==null).map(c=>c.m))].join(', ');
-    document.getElementById('crNote').textContent=
-      `* Записи/CPA по креативах ще недоступні для: ${miss} — їхні сирі вкладки Windsor поки не синхронізував. Підтягнеться саме.`;
-  }
   document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало)<br>'+
     'Воронка ліда: <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
     '<b>Ліквід</b> = реально вийшли на контакт. <b>CPL ліквіда</b> = скільки коштує лід, який справді відповів.<br>'+
-    'CPA рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads (Windsor) + Google-таблиця';
+    'CPA рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads + Google-таблиця';
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
 </body>
