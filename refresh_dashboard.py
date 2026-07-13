@@ -45,8 +45,22 @@ TZ        = datetime.timezone(datetime.timedelta(hours=2))
 LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Alissa",
            "Саида": "Saida", "Даша": "Dasha", "Юлиана": "Barcelona"}
 
+# --- Instagram-кампанії: окремі картки на дашборді -------------------------
+# Ліди цих РК ідуть в Instagram Direct — їх немає ні в лід-формах Meta, ні в
+# Google-таблиці. Витрати/CTR/частота тягнуться з Meta автоматично, а ліди й
+# записи Ірина повідомляє вручну -> INST_MANUAL нижче.
+INST_MGR_PARIS  = "Инста Париж"   # РК «на Саиду» (Saidu), Direct веде Алиса
+INST_MGR_PRAGUE = "Инста Прага"
+
+# {картка: {дата: {"l": ліди за день, "b": записи за день}}} — правиться руками
+INST_MANUAL = {
+    INST_MGR_PRAGUE: {"2026-07-13": {"l": 0, "b": 1}},
+}
+
 # Нові менеджери: вузол у data.json створюється автоматично при першому запуску
-MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "2026-07-09"}}
+MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "2026-07-09"},
+                     INST_MGR_PARIS:  {"city": "Париж", "start": "2026-06-20"},
+                     INST_MGR_PRAGUE: {"city": "Прага", "start": "2026-06-20"}}
 
 # --- ROAS: середній чек (записи x чек / витрати; оцінка, бо запис != оплачена процедура) ---
 # Курси до USD (валюта кабінету) — константи, онови за потреби.
@@ -56,6 +70,7 @@ AVG_CHECK = {   # (сума, валюта). Париж/Барселона — ц
     "Диана": (3990, "CZK"), "Даша": (3990, "CZK"),
     "Таня": (199, "EUR"), "Алиса": (159, "EUR"), "Саида": (159, "EUR"),
     "Юлиана": (199, "EUR"),
+    INST_MGR_PARIS: (159, "EUR"), INST_MGR_PRAGUE: (3990, "CZK"),
 }
 
 def check_usd_node(m):
@@ -168,11 +183,9 @@ def classify(campaign):
     c = campaign or ""
     is_inst = ("_inst" in c) or ("instagram" in c) or ("Saidu" in c)
     if is_inst:
-        if "Prague_Diana" in c:
-            return ("inst", "Диана")
-        if "Saidu" in c or "instagram" in c:
-            return ("inst", "Алиса")
-        return (None, None)
+        if "Prague_Diana" in c or "Prague" in c:
+            return ("inst", INST_MGR_PRAGUE)
+        return ("inst", INST_MGR_PARIS)
     for m, kw in LEAD_KW.items():
         if kw in c:
             return ("lead", m)
@@ -486,7 +499,7 @@ def period_metrics(periods):
         for r in rows:
             if not acct_ok(r): continue
             kind, m = classify(r.get("campaign"))
-            if kind != "lead" or m is None: continue
+            if m is None: continue          # inst-картки теж отримують CTR/CPM/частоту
             a = agg.setdefault(m, {"imp": 0.0, "clicks": 0.0, "spend": 0.0, "reach": 0.0})
             a["imp"]    += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
             a["spend"]  += num(r.get("spend"));       a["reach"]  += num(r.get("reach"))
@@ -564,7 +577,7 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
         for r in rows:
             if not acct_ok(r): continue
             kind, m = classify(r.get("campaign"))
-            if kind != "lead" or m is None: continue
+            if m is None: continue          # inst-ад-сети показуємо (витрати/CTR з Meta)
             aid = str(r.get("adset_id") or "")
             if not aid or aid not in active: continue
             a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
@@ -625,7 +638,7 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
         for r in ads:
             if not acct_ok(r): continue
             kind, m = classify(r.get("campaign"))
-            if kind != "lead" or m is None: continue
+            if m is None: continue          # inst-креативи показуємо (витрати/CTR з Meta)
             aid = str(r.get("ad_id") or "")
             if not aid or aid not in active: continue
             a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
@@ -691,18 +704,20 @@ def main():
 
     lead_spend = {m: {} for m in cur["managers"]}
     lead_leads = {m: {} for m in cur["managers"]}
-    inst_spend = {m: 0.0 for m in cur["managers"]}
     for r in rows:
         kind, m = classify(r.get("campaign"))
         if m is None or m not in cur["managers"]:
             continue
         d = str(r.get("date"))[:10]
         sp = round(num(r.get("spend")), 4); ld = int(num(r.get("actions_lead")))
-        if kind == "inst":
-            inst_spend[m] += sp
-        else:
-            lead_spend[m][d] = lead_spend[m].get(d, 0.0) + sp
-            lead_leads[m][d] = lead_leads[m].get(d, 0) + ld
+        lead_spend[m][d] = lead_spend[m].get(d, 0.0) + sp
+        lead_leads[m][d] = lead_leads[m].get(d, 0) + ld
+
+    # ліди Instagram Direct — вручну від Ірини (Meta їх не бачить як lead-екшн)
+    for m, days in INST_MANUAL.items():
+        if m in lead_leads:
+            for d, v in days.items():
+                lead_leads[m][d] = lead_leads[m].get(d, 0) + int(v.get("l", 0))
 
     out = json.loads(json.dumps(cur))
     out["updated"] = datetime.datetime.now(TZ).replace(microsecond=0).isoformat()
@@ -718,7 +733,7 @@ def main():
         node["dates"] = dates; node["spend"] = spend; node["leads"] = leads; node["cpl"] = cpl
         node["totalSpend"] = tot_s; node["totalLeads"] = tot_l
         node["avgCpl"] = round(tot_s / tot_l, 2) if tot_l > 0 else None
-        node["instSpend"] = round(inst_spend[m], 2)
+        node.pop("instSpend", None)   # інста тепер окремі картки, а не рядок у Діани/Аліси
         node["check"] = check_usd_node(m)   # середній чек для ROAS (None = не показуємо)
 
     # Bookings from the sheet (defensive: keep carried values on any problem)
@@ -772,6 +787,26 @@ def main():
             out["managers"][m]["bookingsToday"] = sum(1 for d in mreg.values() if d == today_local)
         out["_bookReg"] = new_reg
 
+    # Записи Instagram-карток — з INST_MANUAL (незалежно від Google-таблиці)
+    _td = datetime.date.fromisoformat(TODAY)
+    for m, days in INST_MANUAL.items():
+        node = out["managers"].get(m)
+        if node is None:
+            continue
+        tot = b7 = bY = bM = b1 = 0
+        for ds, v in days.items():
+            b = int(v.get("b", 0))
+            if not b:
+                continue
+            cd = datetime.date.fromisoformat(ds)
+            tot += b
+            if 0 <= (_td - cd).days < 7: b7 += b
+            if cd == _td - datetime.timedelta(days=1): bY += b
+            if cd >= _td.replace(day=1): bM += b
+            if cd == _td: b1 += b
+        node["bookings"] = tot; node["bookings7d"] = b7; node["bookingsYest"] = bY
+        node["bookingsMonth"] = bM; node["bookings1d"] = b1; node["bookingsToday"] = b1
+
     # --- Meta-метрики по періодах (CTR / CPM / частота) + ад-сети й креативи по періодах ---
     td = datetime.date.fromisoformat(TODAY)
     yest_s = (td - datetime.timedelta(days=1)).isoformat()
@@ -824,8 +859,8 @@ def main():
         f.write(compact)
     print("updated", out["updated"], "| bytes", len(compact))
     for m, node in out["managers"].items():
-        print("%-6s spend %-8s leads %-4s book %-3s cpa %-6s inst %s"
-              % (m, node["totalSpend"], node["totalLeads"], node["bookings"], node["cpa"], node["instSpend"]))
+        print("%-12s spend %-8s leads %-4s book %-3s cpa %s"
+              % (m, node["totalSpend"], node["totalLeads"], node.get("bookings"), node["cpa"]))
 
 if __name__ == "__main__":
     main()
