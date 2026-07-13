@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>SMAS-ліфтинг · Дашборд реклами</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='64' y2='64'%3E%3Cstop offset='0' stop-color='%234f8cff'/%3E%3Cstop offset='1' stop-color='%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Crect x='12' y='34' width='9' height='18' rx='2.5' fill='%23fff' opacity='.7'/%3E%3Crect x='27' y='24' width='9' height='28' rx='2.5' fill='%23fff' opacity='.85'/%3E%3Crect x='42' y='13' width='9' height='39' rx='2.5' fill='%23fff'/%3E%3C/svg%3E">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
 :root{--bg:#0f1420;--card:#1a2130;--card2:#212a3d;--txt:#e8ecf4;--mut:#8b96ab;--acc:#4f8cff;--good:#3ecf8e;--warn:#f5b942;--bad:#ff6b6b;--border:#2a3550}
@@ -370,7 +371,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
     '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії, Прага = 3990 Kč (модель).<br>'+
-    'CPA рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads + Google-таблиця';
+    'CPA рахується від витрат лід-форм (Instagram Direct показано окремо) · Дані: Meta Ads + Google-таблиця'
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
 </body>
