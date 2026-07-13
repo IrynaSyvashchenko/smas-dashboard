@@ -368,6 +368,7 @@ def _tally_manager(rows, today, phone_of, row_ok):
     booked = b7 = b1 = leads = 0
     bY = bM = 0                         # bookings among leads created yesterday / this month
     old_keys = []                       # keys of booked leads created BEFORE today
+    booked_keys = []                    # ключі ВСІХ поточних записів (для реєстру «коли з'явився запис»)
     # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
     Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "all")}
     leadsQ = []   # усі мої ліди з телефоном: дата + прапорці (для таблиць ад-сетів/креативів по періодах)
@@ -403,6 +404,7 @@ def _tally_manager(rows, today, phone_of, row_ok):
 
         if bk:
             booked += 1
+            booked_keys.append("%s|%s" % (k[0], k[1]))
             if cd:
                 if 0 <= (today - cd).days < 7:
                     b7 += 1
@@ -418,7 +420,7 @@ def _tally_manager(rows, today, phone_of, row_ok):
     return {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
             "bookingsYest": bY, "bookingsMonth": bM,
             "leads_seen": leads, "old_keys": old_keys, "q": Q,
-            "leadsQ": leadsQ}
+            "leadsQ": leadsQ, "booked_keys": booked_keys}
 
 def _print_mgr(mgr, v):
     qa = v["q"]["all"]; ql = qa["leads"] or 1
@@ -748,6 +750,27 @@ def main():
                     node["bookingsOld1d"] = 0              # first snapshot of the day for this mgr
                     new_base_old[m] = sorted(old_now)
         out["_baseline"] = {"date": TODAY, "old": new_base_old}
+
+        # Реєстр «коли позначка запису вперше з'явилась» (_bookReg, сайт його ігнорує).
+        # «Записи сьогодні» = записи з першою появою СЬОГОДНІ за місцевим часом (TZ) —
+        # стійко до падінь/перезапусків, на відміну від старого порівняння зі знімком дня.
+        # Міграція: при першій появі реєстру існуючі записи датуються "" і не рахуються.
+        reg = cur.get("_bookReg") or {}
+        today_local = datetime.datetime.now(TZ).date().isoformat()
+        new_reg = dict(reg)   # менеджери, яких цей запуск не оновив, зберігають свій реєстр
+        for m, v in bk.items():
+            if m not in out["managers"] or v["leads_seen"] <= 0:
+                continue
+            booked_set = set(v["booked_keys"])
+            mreg = dict(reg.get(m) or {})
+            migrate = m not in reg
+            for kk in booked_set:
+                if kk not in mreg:
+                    mreg[kk] = "" if migrate else today_local
+            mreg = {kk: d for kk, d in mreg.items() if kk in booked_set}   # знятий запис -> геть
+            new_reg[m] = mreg
+            out["managers"][m]["bookingsToday"] = sum(1 for d in mreg.values() if d == today_local)
+        out["_bookReg"] = new_reg
 
     # --- Meta-метрики по періодах (CTR / CPM / частота) + ад-сети й креативи по періодах ---
     td = datetime.date.fromisoformat(TODAY)
