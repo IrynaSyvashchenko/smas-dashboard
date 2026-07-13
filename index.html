@@ -32,6 +32,10 @@ h2{font-size:1.1rem;margin:28px 0 12px;color:var(--acc)}
 .card.total{border-color:var(--acc)}
 .morealerts summary{cursor:pointer;color:var(--mut);font-size:.82rem;padding:5px 2px;list-style-position:inside}
 .morealerts[open] summary{margin-bottom:6px}
+tr.grp td{background:var(--card2);color:var(--txt);font-weight:600;text-align:left;padding:9px 10px;font-size:.85rem}
+tr.grp .gcity{color:var(--mut);font-weight:400}
+tr.grp .gsum{float:right;color:var(--mut);font-weight:400;font-size:.75rem}
+tr.grp:hover td{background:var(--card2)}
 .row{display:flex;justify-content:space-between;font-size:.82rem;padding:3px 0;border-bottom:1px dashed var(--border)}
 .row:last-child{border:none}
 .row .l{color:var(--mut)}
@@ -74,16 +78,16 @@ tr:hover td{background:var(--card2)}
 <div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
 
 <h2 id="asTitle">Ад-сети (аудиторія · гео)</h2>
-<div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно. Тут же — нецільові й «без реакції» по кожному ад-сету.</div>
+<div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно. Рядки згруповані по місту й менеджеру.</div>
 <div style="overflow-x:auto"><table id="asTable">
-<thead><tr><th>Ад-сет · кампанія</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Нецільові</th><th>Без реакції</th><th>Записи</th><th>CPA</th></tr></thead>
+<thead><tr><th>Ад-сет · кампанія</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Нецільові</th><th>Без реакції</th><th>Записи</th><th>CPA</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="asNote"></div>
 
 <h2 id="crTitle">Креативи</h2>
 <div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
 <div style="overflow-x:auto"><table id="crTable">
-<thead><tr><th>Креатив · ад-сет</th><th>Менеджер</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th></tr></thead>
+<thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="crNote"></div>
 
@@ -112,11 +116,14 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // ---- сьогодні: окрема чесна смужка (день ще неповний) ----
   const sumAll=(key,pred)=>Object.values(M).reduce((s,m)=>s+m.dates.reduce((a,d,i)=>a+(pred(d)?(m[key][i]||0):0),0),0);
   const tLeads=sumAll('leads',d=>d===today), tSpend=sumAll('spend',d=>d===today);
-  const tNew=Object.values(M).reduce((s,m)=>s+(m.bookings1d??0),0);
-  const tOld=Object.values(M).reduce((s,m)=>s+(m.bookingsOld1d??0),0);
+  // «нові записи сьогодні» = позначки запису, що ВПЕРШЕ з'явились сьогодні (bookingsToday з реєстру);
+  // fallback на стару формулу для data.json без цього поля
+  const perB=Object.entries(M).map(([n,m])=>({n,c:m.bookingsToday??((m.bookings1d??0)+(m.bookingsOld1d??0))})).filter(x=>x.c>0).sort((a,b)=>b.c-a.c);
+  const tB=perB.reduce((s,x)=>s+x.c,0);
+  const bookStr=tB?`<b>${tB}</b> — ${perB.map(x=>`${x.n} <b>${x.c}</b>`).join(' · ')}`:'<b>0</b>';
   document.getElementById('todayStrip').innerHTML=
     `⏳ <b>Сьогодні (${dd(today)}) — день ще неповний</b>, дані Meta і записи доходять із затримкою: `+
-    `ліди <b>${tLeads}</b> · витрати <b>${fmt(tSpend)}</b> · записи сьогодні: <b>${tNew}</b> нових + <b>${tOld}</b> зі старих. `+
+    `ліди <b>${tLeads}</b> · витрати <b>${fmt(tSpend)}</b> · нових записів сьогодні: ${bookStr}. `+
     `Для рішень дивись «Вчора» — це перший повний день.`;
 
   // ---- періоди ----
@@ -261,6 +268,24 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     renderCreatives(k);
   }
 
+  // ---- групування рядків по місту -> менеджеру (щоб було видно, хто є хто) ----
+  const CITY_ORDER=['Прага','Париж','Барселона'];
+  const groupByMgr=list=>{
+    const g=new Map();
+    for(const r of list){ if(!g.has(r.m)) g.set(r.m,[]); g.get(r.m).push(r); }
+    return [...g.entries()].sort((a,b)=>{
+      const ia=CITY_ORDER.indexOf(M[a[0]]?.city), ib=CITY_ORDER.indexOf(M[b[0]]?.city);
+      return ((ia<0?99:ia)-(ib<0?99:ib))||a[0].localeCompare(b[0]);
+    });
+  };
+  const grpRow=(mgr,rows,colspan)=>{
+    const gsp=rows.reduce((s,x)=>s+(x.spend||0),0), gld=rows.reduce((s,x)=>s+(x.leads||0),0);
+    const gbk=rows.reduce((s,x)=>s+(x.book||0),0);
+    return `<tr class="grp"><td colspan="${colspan}" style="border-left:3px solid ${COLORS[mgr]||'#4f8cff'}">`+
+      `<span class="gcity">${M[mgr]?.city||''} ·</span> ${mgr}`+
+      `<span class="gsum">${fmt(gsp)} · лідів: ${gld} · записів: ${gbk}</span></td></tr>`;
+  };
+
   // ---- ад-сети (по періодах) ----
   const asb=document.querySelector('#asTable tbody');
   const pct=(n,d)=>d?Math.round(n/d*100):null;
@@ -268,20 +293,23 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const p=P[k], list=AS[k]||[];
     document.getElementById('asTitle').textContent=`Ад-сети (аудиторія · гео) — ${p.label} · ${p.range}`;
     asb.innerHTML='';
-    for(const a of list){
-      const q=a.q, fcls=a.freq==null?'':(a.freq>=2.5?'r':a.freq>=1.8?'y':'g');
-      const bR=q?pct(q.bad,q.leads):null, nR=q?pct(q.noresp,q.leads):null;
-      const bcls=bR==null?'':(bR>=20?'r':bR>=10?'y':'g');
-      const ncls=nR==null?'':(nR>=40?'r':nR>=25?'y':'g');
-      asb.insertAdjacentHTML('beforeend',`<tr>
-        <td>${a.adset}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
-        <td>${a.m}</td><td>${fmt(a.spend)}</td><td>${a.leads}</td><td>${fmt(a.cpl)}</td>
-        <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
-        <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
-        <td>${bR==null?'—*':`<span class="tag ${bcls}">${q.bad} · ${bR}%</span>`}</td>
-        <td>${nR==null?'—*':`<span class="tag ${ncls}">${q.noresp} · ${nR}%</span>`}</td>
-        <td>${a.book==null?'—*':a.book}</td>
-        <td>${a.book==null?'—*':fmt(a.cpa)}</td></tr>`);
+    for(const [mgr,rows] of groupByMgr(list)){
+      asb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,10));
+      for(const a of [...rows].sort((x,y)=>(y.spend||0)-(x.spend||0))){
+        const q=a.q, fcls=a.freq==null?'':(a.freq>=2.5?'r':a.freq>=1.8?'y':'g');
+        const bR=q?pct(q.bad,q.leads):null, nR=q?pct(q.noresp,q.leads):null;
+        const bcls=bR==null?'':(bR>=20?'r':bR>=10?'y':'g');
+        const ncls=nR==null?'':(nR>=40?'r':nR>=25?'y':'g');
+        asb.insertAdjacentHTML('beforeend',`<tr>
+          <td>${a.adset}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
+          <td>${fmt(a.spend)}</td><td>${a.leads}</td><td>${fmt(a.cpl)}</td>
+          <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
+          <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
+          <td>${bR==null?'—*':`<span class="tag ${bcls}">${q.bad} · ${bR}%</span>`}</td>
+          <td>${nR==null?'—*':`<span class="tag ${ncls}">${q.noresp} · ${nR}%</span>`}</td>
+          <td>${a.book==null?'—*':a.book}</td>
+          <td>${a.book==null?'—*':fmt(a.cpa)}</td></tr>`);
+      }
     }
     const notes=[];
     if(oldFmt) notes.push(OLDFMT_NOTE);
@@ -301,18 +329,21 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     if(cpaC) cpaC.destroy();
     cpaC=new Chart(cpaChart,{type:'bar',data:{labels:cr.map(c=>c.name+' · '+c.m),datasets:[{label:'CPA $',data:cr.map(c=>c.cpa),backgroundColor:cr.map(c=>COLORS[c.m])}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
     crb.innerHTML='';
-    for(const c of cr){
-      const noBk=(c.book==null);
-      const cls=noBk?'':(c.cpa==null?'r':(c.cpa<8?'g':c.cpa<15?'y':'r'));
-      const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого'));
-      const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
-      crb.insertAdjacentHTML('beforeend',`<tr>
-        <td>${c.name} · ${c.adset}</td><td>${c.m}</td>
-        <td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td>
-        <td>${c.ctr!=null?c.ctr+'%':'—'}</td>
-        <td>${c.freq!=null?`<span class="tag ${fcls}">${c.freq}</span>`:'—'}</td>
-        <td>${noBk?'—*':c.book}</td>
-        <td>${noBk?'—*':`${fmt(c.cpa)} <span class="tag ${cls}">${st}</span>`}</td></tr>`);
+    for(const [mgr,rows] of groupByMgr(cr)){
+      crb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,8));
+      for(const c of [...rows].sort((x,y)=>(x.cpa??1e9)-(y.cpa??1e9))){
+        const noBk=(c.book==null);
+        const cls=noBk?'':(c.cpa==null?'r':(c.cpa<8?'g':c.cpa<15?'y':'r'));
+        const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого'));
+        const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
+        crb.insertAdjacentHTML('beforeend',`<tr>
+          <td>${c.name} · ${c.adset}</td>
+          <td>${fmt(c.spend)}</td><td>${c.leads}</td><td>${fmt(c.cpl)}</td>
+          <td>${c.ctr!=null?c.ctr+'%':'—'}</td>
+          <td>${c.freq!=null?`<span class="tag ${fcls}">${c.freq}</span>`:'—'}</td>
+          <td>${noBk?'—*':c.book}</td>
+          <td>${noBk?'—*':`${fmt(c.cpa)} <span class="tag ${cls}">${st}</span>`}</td></tr>`);
+      }
     }
     const notes=[];
     if(oldFmt) notes.push(OLDFMT_NOTE);
@@ -334,7 +365,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   new Chart(leadsChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('leads')},options:{interaction:{mode:'index',intersect:false}}});
   new Chart(spendChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
 
-  document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало)<br>'+
+  document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало) · «Нові записи сьогодні» вгорі = позначки запису, що з’явились у таблиці сьогодні (незалежно від дати ліда)<br>'+
     'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль / випадковий) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
