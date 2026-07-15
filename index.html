@@ -203,22 +203,29 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
             <div class="row"><span class="l">Частота</span><b><span class="tag ${fcls}">${f??'—'}</span></b></div>`;
   };
 
-  // Алерти: тільки те, що вимагає ДІЇ, без дублювання менеджер/ад-сет/креатив.
-  // Гроші без лідів -> вимкнути; частота креативу -> замінити; гео/холодна аудиторія -> ад-сет.
+  // Алерти: тільки те, що вимагає ДІЇ і б'є по грошах.
+  // Гроші без лідів -> вимкнути; дорогий запис (CPA vs чек) -> розібратись; частота -> замінити креатив.
   function buildAlerts(k){
     const A=[];
     const deadAdsets=new Set();
     for(const a of (AS[k]||[])){
-      const q=a.q;
       if(isInst(a.m)) continue;   // ліди інсти йдуть у Direct — «0 лідів» тут не помилка
       if(a.spend>=5&&a.leads===0){
         deadAdsets.add(a.adset);
         A.push(['bad',`💸 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> витрачено, <b>0 лідів</b> — перевір або вимкни.`]);
       }
-      if(q&&q.leads>=5&&q.bad/q.leads>=.2)
-        A.push(['warn',`📍 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${Math.round(q.bad/q.leads*100)}%</b> нецільових — перевір гео/радіус.`]);
-      if(q&&q.leads>=10&&q.noresp/q.leads>=.5)
-        A.push(['warn',`🥶 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${Math.round(q.noresp/q.leads*100)}%</b> лідів без реакції — креатив/офер тягне незацікавлених.`]);
+    }
+    // CPA по ад-сетах: рахуємо ЗАВЖДИ за 7 днів (запис доганяє лід за 1–5 днів, «вчора» шумить).
+    // Пороги від чека міста: ≥25% чека або ≥$25 без записів — критично, ≥15% — попередження.
+    for(const a of (AS.d7||[])){
+      if(isInst(a.m)||deadAdsets.has(a.adset)) continue;
+      const chk=M[a.m]?.check?.usd;
+      if(a.spend>=25&&a.book===0)
+        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> за 7 днів і <b>0 записів</b> — ліди не конвертяться.`]);
+      else if(chk&&a.cpa!=null&&a.cpa>=chk*0.25)
+        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (7 днів) — це ≥25% чека ${fmt(chk,0)}.`]);
+      else if(chk&&a.cpa!=null&&a.cpa>=chk*0.15)
+        A.push(['warn',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (7 днів) — дорожче за 15% чека ${fmt(chk,0)}.`]);
     }
     for(const c of (CR[k]||[])){
       if(deadAdsets.has(c.adset)) continue;   // алерт по цілому ад-сету вже є
@@ -230,7 +237,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     A.sort((a,b)=>(a[0]==='bad'?0:1)-(b[0]==='bad'?0:1));   // спочатку критичні
     const el=document.getElementById('alerts');
     if(!A.length){
-      el.innerHTML=`<div class="alert ok">✅ Критичного нічого: гроші без лідів не горять, креативи не вигоріли, гео в нормі.</div>`;
+      el.innerHTML=`<div class="alert ok">✅ Критичного нічого: гроші без лідів не горять, записи не задорогі, креативи не вигоріли.</div>`;
       return;
     }
     const MAXV=4, html=t=>`<div class="alert ${t[0]==='warn'?'warn':''}">${t[1]}</div>`;
@@ -401,6 +408,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
     '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії, Прага = 3990 Kč (модель).<br>'+
+    'Алерти про ціну запису (💰) рахуються завжди за останні 7 днів і порівнюються з чеком міста (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
     '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta, а ліди й записи Ірина вносить вручну.<br>'+
     'Дані: Meta Ads + Google-таблиця'
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
