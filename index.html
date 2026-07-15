@@ -70,6 +70,15 @@ tr:hover td{background:var(--card2)}
 <h2>⚠️ Алерти</h2>
 <div id="alerts"></div>
 
+<div id="scSection" style="display:none">
+<h2>🚀 Масштабування</h2>
+<div class="phint">Безпечне правило: піднімати бюджет на <b>20–30%</b> і не частіше, ніж <b>раз на 3 дні</b> — різкіший або частіший стрибок скидає навчання ад-сета. Рекомендація враховує CPA за 7 днів, частоту і дату останньої зміни бюджету з журналу кабінету.</div>
+<div style="overflow-x:auto"><table id="scTable">
+<thead><tr><th>Ад-сет · кампанія</th><th>Бюджет/день</th><th>Остання зміна бюджету</th><th>CPA · 7 днів</th><th>Рекомендація</th></tr></thead>
+<tbody></tbody></table></div>
+<div class="phint" id="scNote"></div>
+</div>
+
 <h2>По менеджерах</h2>
 <div class="tabs" id="tabs"></div>
 <div class="phint" id="phint"></div>
@@ -391,9 +400,57 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     document.getElementById('crNote').textContent=notes.join('');
   }
 
+  // ---- масштабування: бюджет + остання зміна (журнал кабінету) + рекомендація ----
+  function renderScaling(){
+    const sc=D.scaling;
+    if(!Array.isArray(sc)||!sc.length) return;
+    document.getElementById('scSection').style.display='';
+    const d7map=new Map((AS.d7||[]).map(a=>[a.m+'|'+(a.campaign||'')+'|'+a.adset,a]));
+    const rows=[];
+    for(const s of sc){
+      const a=d7map.get(s.m+'|'+(s.campaign||'')+'|'+s.adset);
+      const chk=M[s.m]?.check?.usd;
+      const cpa=a?.cpa, freq=a?.freq, book=a?.book, spend=a?.spend||0;
+      const since=s.chg?.date||s.created;                       // без змін бюджету = від створення
+      const days=since?Math.round((new Date(today)-new Date(since))/864e5):null;
+      const okDate=since?dd(addD(since,3)):null;
+      let rec,cls;
+      if(days!=null&&days<3)
+        {rec=`зачекай до ${okDate} — остання зміна ${dd(since)}`;cls='y';}
+      else if(freq!=null&&freq>=2.2)
+        {rec=`частота ${freq} — спершу свіжий креатив`;cls='y';}
+      else if(isInst(s.m))
+        {rec=s.budget?`можна обережно +20%: ${fmt(s.budget)} → ${fmt(s.budget*1.2)} (контролюй Direct)`:'можна обережно +20% (контролюй Direct)';cls='g';}
+      else if(spend>=25&&book===0)
+        {rec='0 записів за 7 днів — не масштабуй';cls='r';}
+      else if(chk&&cpa!=null&&cpa>=chk*0.15)
+        {rec=`запис ${fmt(cpa)} — спершу здешевити, не масштабуй`;cls='r';}
+      else if(cpa!=null&&(book||0)>=2)
+        {rec=s.budget?`можна +20–30%: ${fmt(s.budget)} → ${fmt(s.budget*1.25)}–${fmt(s.budget*1.3)}/день`:'можна +20–30%';cls='g';}
+      else
+        {rec='мало записів для висновку — не чіпай';cls='y';}
+      rows.push({s,a,rec,cls});
+    }
+    rows.sort((x,y)=>('gyr'.indexOf(x.cls)-'gyr'.indexOf(y.cls))||((y.s.budget||0)-(x.s.budget||0)));
+    const scb=document.querySelector('#scTable tbody');
+    scb.innerHTML='';
+    for(const r of rows){
+      const s=r.s;
+      const chg=s.chg?`${dd(s.chg.date)}${s.chg.from!=null&&s.chg.to!=null?` · ${fmt(s.chg.from)} → ${fmt(s.chg.to)}`:''}`:(s.created?`не мінявся (з ${dd(s.created)})`:'—');
+      scb.insertAdjacentHTML('beforeend',`<tr>
+        <td>${s.adset}<br><span style="color:var(--mut);font-size:.72rem">${s.m} · ${s.campaign||''}</span></td>
+        <td><b>${fmt(s.budget)}</b>${s.lvl==='campaign'?' <span class="tag y">CBO</span>':''}</td>
+        <td>${chg}</td>
+        <td>${r.a?fmt(r.a.cpa):'—'}</td>
+        <td><span class="tag ${r.cls}">${r.rec}</span></td></tr>`);
+    }
+    document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta. CBO = бюджет на рівні кампанії (спільний для її ад-сетів). «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥3 дні.`;
+  }
+
   render('yest');
   renderAdsets('yest');
   renderCreatives('yest');
+  renderScaling();
 
   // ---- графіки (з 1 липня — червневий розгін тільки шумить) ----
   const CHART_FROM='2026-07-01';
