@@ -678,6 +678,68 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
         print("  creatives [%-5s]: %d активних" % (key, len(res)))
     return out
 
+def _graph_all(edge, fields, extra=None):
+    """GET /act_{ACCOUNT}/{edge} з пагінацією -> список рядків."""
+    params = {"fields": fields, "limit": "200", "access_token": META_TOKEN}
+    if extra:
+        params.update(extra)
+    url = "%s/act_%s/%s?%s" % (GRAPH_API, ACCOUNT, edge, urllib.parse.urlencode(params))
+    out = []
+    while url:
+        payload = http_json(url)
+        out += payload.get("data", [])
+        url = (payload.get("paging") or {}).get("next")
+    return out
+
+def fetch_scaling():
+    """Блок «Масштабування»: активні ад-сети з денним бюджетом (свій або CBO-кампанії)
+    + остання зміна бюджету з журналу кабінету (/activities). Рекомендацію рахує сайт.
+    Без META_TOKEN повертає None -> старий блок у data.json лишається як був."""
+    if not META_TOKEN:
+        return None
+    adsets = _graph_all("adsets",
+                        "id,name,daily_budget,effective_status,created_time,"
+                        "campaign{id,name,daily_budget}")
+    # журнал змін бюджету: object_id -> остання подія (бюджети Meta віддає в центах)
+    events = {}
+    try:
+        for ev in _graph_all("activities", "event_time,event_type,object_id,extra_data",
+                             {"since": DATE_FROM, "limit": "500"}):
+            et = str(ev.get("event_type") or "").lower()
+            if "budget" not in et:
+                continue
+            oid = str(ev.get("object_id") or "")
+            t = str(ev.get("event_time") or "")
+            if not oid or (oid in events and t <= events[oid]["t"]):
+                continue
+            old = new = None
+            try:
+                x = json.loads(ev.get("extra_data") or "{}")
+                if x.get("old_value") is not None: old = round(num(x.get("old_value")) / 100.0, 2)
+                if x.get("new_value") is not None: new = round(num(x.get("new_value")) / 100.0, 2)
+            except Exception:
+                pass
+            events[oid] = {"t": t, "old": old, "new": new}
+    except Exception as e:
+        print("  activities FAIL (історія бюджетів недоступна):", str(e)[:120])
+    out = []
+    for a in adsets:
+        if a.get("effective_status") != "ACTIVE":
+            continue
+        camp = a.get("campaign") or {}
+        kind, m = classify(camp.get("name"))
+        if m is None:
+            continue
+        b = a.get("daily_budget"); lvl = "adset"; evt_id = str(a.get("id"))
+        if not num(b) and num(camp.get("daily_budget")):
+            b = camp.get("daily_budget"); lvl = "campaign"; evt_id = str(camp.get("id"))
+        ev = events.get(evt_id)
+        out.append({"m": m, "adset": a.get("name"), "campaign": camp.get("name"),
+                    "budget": round(num(b) / 100.0, 2) if num(b) else None,
+                    "lvl": lvl, "created": str(a.get("created_time") or "")[:10],
+                    "chg": ({"date": ev["t"][:10], "from": ev["old"], "to": ev["new"]} if ev else None)})
+    return out
+
 # ---------------- MAIN ----------------
 def main():
     rows = fetch_meta()
@@ -847,6 +909,16 @@ def main():
         _merge_periods("adsets", build_adsets(PERIODS, yest_s, bk, raw_map, raw_ok))
     except Exception as e:
         print("adsets failed:", e)
+
+    # бюджети + історія їх змін для блоку «Масштабування» (падає м'яко, старе лишається)
+    try:
+        sc = fetch_scaling()
+        if sc is not None:
+            out["scaling"] = sc
+            print("scaling: %d активних ад-сетів, історія змін є для %d"
+                  % (len(sc), sum(1 for x in sc if x["chg"])))
+    except Exception as e:
+        print("scaling failed -> carrying over:", str(e)[:150])
 
     # recompute cpa/conv from (possibly updated) bookings + fresh spend/leads
     for m, node in out["managers"].items():
