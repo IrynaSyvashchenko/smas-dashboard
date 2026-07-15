@@ -715,8 +715,9 @@ def fetch_scaling():
             old = new = None
             try:
                 x = json.loads(ev.get("extra_data") or "{}")
-                if x.get("old_value") is not None: old = round(num(x.get("old_value")) / 100.0, 2)
-                if x.get("new_value") is not None: new = round(num(x.get("new_value")) / 100.0, 2)
+                # нульові/порожні суми Meta пише для частини подій — показуємо тільки реальні
+                if num(x.get("old_value")) > 0: old = round(num(x.get("old_value")) / 100.0, 2)
+                if num(x.get("new_value")) > 0: new = round(num(x.get("new_value")) / 100.0, 2)
             except Exception:
                 pass
             events[oid] = {"t": t, "old": old, "new": new}
