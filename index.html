@@ -72,7 +72,7 @@ tr:hover td{background:var(--card2)}
 
 <div id="scSection" style="display:none">
 <h2>🚀 Масштабування</h2>
-<div class="phint">Безпечне правило: піднімати бюджет на <b>20–30%</b> і не частіше, ніж <b>раз на 3 дні</b> — різкіший або частіший стрибок скидає навчання ад-сета. Рекомендація враховує CPA за 7 днів, частоту і дату останньої зміни бюджету з журналу кабінету.</div>
+<div class="phint">Безпечне правило: піднімати бюджет на <b>20–30%</b> і не частіше, ніж <b>раз на 2–3 дні</b> — різкіший або частіший стрибок скидає навчання ад-сета (Meta: не редагуй, поки ад-сет «навчається»). Рекомендація враховує CPA за 7 днів, частоту і дату останньої зміни бюджету з журналу кабінету.</div>
 <div style="overflow-x:auto"><table id="scTable">
 <thead><tr><th>Ад-сет · кампанія</th><th>Бюджет/день</th><th>Остання зміна бюджету</th><th>CPA · 7 днів</th><th>Рекомендація</th></tr></thead>
 <tbody></tbody></table></div>
@@ -413,9 +413,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       const cpa=a?.cpa, freq=a?.freq, book=a?.book, spend=a?.spend||0;
       const since=s.chg?.date||s.created;                       // без змін бюджету = від створення
       const days=since?Math.round((new Date(today)-new Date(since))/864e5):null;
-      const okDate=since?dd(addD(since,3)):null;
+      const okDate=since?dd(addD(since,2)):null;
       let rec,cls;
-      if(days!=null&&days<3)
+      if(days!=null&&days<2)
         {rec=`зачекай до ${okDate} — остання зміна ${dd(since)}`;cls='y';}
       else if(freq!=null&&freq>=2.2)
         {rec=`частота ${freq} — спершу свіжий креатив`;cls='y';}
@@ -444,7 +444,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <td>${r.a?fmt(r.a.cpa):'—'}</td>
         <td><span class="tag ${r.cls}">${r.rec}</span></td></tr>`);
     }
-    document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta. CBO = бюджет на рівні кампанії (спільний для її ад-сетів). «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥3 дні.`;
+    document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta. CBO = бюджет на рівні кампанії (спільний для її ад-сетів). «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥2 дні. Офіційне правило Meta — без редагувань, поки ад-сет «навчається» (~50 результатів після суттєвої зміни), тож для повільних ад-сетів (мало лідів) краще чекати довше.`;
   }
 
   render('yest');
