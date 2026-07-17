@@ -343,6 +343,10 @@ def fetch_sheet_rows(gid=None, ss=None, sheet=None):
 # "Yaliana" в назві АБО просто існувати в кабінеті Ірини (barca_camps).
 BARCA_SS        = "1yabb6jwu15n8N9CBTdWk3ypzvc6mkldclpAu5nNpVVg"
 BARCA_VERA_GID  = "190303918"        # вкладка «Юлиана Вера 2» (статуси)
+# з 15.07 записи ведуться ще й у новій вкладці «Юлиана Ирина» — читаємо ОБИДВІ.
+# Порядок важливий: Віра перша, щоб у лідів, які є в обох, лишався старий рядок
+# (і ключ у реєстрі записів не мінявся).
+BARCA_STATUS    = ({"gid": BARCA_VERA_GID}, {"sheet": "Юлиана Ирина"})
 BARCA_RAW_SHEETS = ("фб3", "fb.")    # сирі вкладки з ad_id (ліди задвоєні між ними — дедуп по телефону)
 BARCA_CAMP_KW   = ("yaliana",)
 BARCA_MGR       = "Юлиана"
@@ -465,10 +469,24 @@ def compute_bookings(barca_camps=frozenset()):
     try:
         ya = fetch_barcelona_raw(barca_camps)
         if ya:
-            rows = fetch_sheet_rows(gid=BARCA_VERA_GID, ss=BARCA_SS)
+            rows = []
+            for src in BARCA_STATUS:
+                try:
+                    rows += fetch_sheet_rows(ss=BARCA_SS, **src)
+                except Exception as e:
+                    print("  барселона: статусна вкладка %s не прочиталась ->" % src, str(e)[:80])
+            # лід може бути в обох статусних вкладках: один рядок на телефон,
+            # пріоритет рядку з позначкою запису (а при рівності — першій вкладці)
+            byph = {}
+            for r in rows:
+                ph = phone9(_barca_phone(r))
+                if not ph:
+                    continue
+                if ph not in byph or (is_booked(r) and not is_booked(byph[ph])):
+                    byph[ph] = r
             phones = set(ya)
             res[BARCA_MGR] = _tally_manager(
-                rows, today, _barca_phone,
+                list(byph.values()), today, _barca_phone,
                 lambda r: phone9(_barca_phone(r)) in phones)
             _print_mgr(BARCA_MGR, res[BARCA_MGR])
         else:
