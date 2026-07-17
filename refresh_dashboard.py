@@ -356,23 +356,30 @@ def _barca_phone(r):
     return r.get("número_de_teléfono") or r.get("phone_number")
 
 def fetch_barcelona_raw(extra_camps=frozenset()):
-    """{phone9: {m, ad_id, adset_id, ad, adset}} — ліди Ірини з сирих вкладок Барселони."""
-    out = {}
+    """{phone9: {m, ad_id, adset_id, ad, adset}} — ліди Ірини з сирих вкладок Барселони.
+
+    Атрибуція по ПЕРШОМУ дотику: той самий телефон міг спершу прийти з кампанії
+    Віри (Yuliana), а пізніше ще раз клікнути рекламу Ірини (Yaliana). Такий лід —
+    Вірин, не рахуємо. Беремо найРАНІШИЙ рядок телефону і дивимось, чия кампанія."""
+    seen = {}   # phone9 -> {"key": created_time (порожнє = найпізніше), "mine": bool, "hit": {...}}
     for name in BARCA_RAW_SHEETS:
         for r in fetch_sheet_rows(ss=BARCA_SS, sheet=name):
-            camp = str(r.get("campaign_name") or "")
-            cl = camp.lower()
-            if not (any(k in cl for k in BARCA_CAMP_KW) or (camp and camp in extra_camps)):
-                continue
             ph = phone9(_barca_phone(r))
             if not ph:
                 continue
-            out[ph] = {"m": BARCA_MGR,
-                       "ad_id": _strip_id_prefix(r.get("ad_id")),
-                       "adset_id": _strip_id_prefix(r.get("adset_id")),
-                       "ad": str(r.get("ad_name") or ""),
-                       "adset": str(r.get("adset_name") or "")}
-    return out
+            camp = str(r.get("campaign_name") or "")
+            cl = camp.lower()
+            mine = any(k in cl for k in BARCA_CAMP_KW) or (camp and camp in extra_camps)
+            key = str(r.get("created_time") or "") or "9999"
+            cur = seen.get(ph)
+            if cur is None or key < cur["key"]:
+                seen[ph] = {"key": key, "mine": mine,
+                            "hit": {"m": BARCA_MGR,
+                                    "ad_id": _strip_id_prefix(r.get("ad_id")),
+                                    "adset_id": _strip_id_prefix(r.get("adset_id")),
+                                    "ad": str(r.get("ad_name") or ""),
+                                    "adset": str(r.get("adset_name") or "")}}
+    return {ph: v["hit"] for ph, v in seen.items() if v["mine"]}
 
 def _iryna_row(r):
     t = str(r.get("таргетолог") or "").strip().lower()
