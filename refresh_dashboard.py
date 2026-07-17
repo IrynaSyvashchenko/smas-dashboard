@@ -71,7 +71,8 @@ MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "20
 EUR_USD = 1.17
 CZK_USD = 0.047
 AVG_CHECK = {   # (сума, валюта). Париж/Барселона — ціна оферу в кампанії; Прага — «модельна» ціна.
-    "Диана": (3990, "CZK"), "Даша": (3990, "CZK"),
+    # Диана: з 18.07 акція для моделей 2999 Kč (стара модельна 3990 лишилась у Даші/інсти).
+    "Диана": (2999, "CZK"), "Даша": (3990, "CZK"),
     "Таня": (199, "EUR"), "Алиса": (159, "EUR"), "Саида": (159, "EUR"),
     "Юлиана": (199, "EUR"),
     INST_MGR_PARIS: (159, "EUR"), INST_MGR_PRAGUE: (3990, "CZK"),
@@ -626,8 +627,9 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
     return out
 
 def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
-    """Креативи ПО КОЖНОМУ ПЕРІОДУ, тільки АКТИВНІ (витрати > 0 вчора/сьогодні).
-    Повертає {period_key: [рядки]}."""
+    """Креативи ПО КОЖНОМУ ПЕРІОДУ. Показуємо ВСІ, що мали витрати в періоді;
+    прапорець "act" = чи крутиться зараз (витрати вчора/сьогодні) — сайт
+    показує неактивні сірим. Повертає {period_key: [рядки]}."""
     active = _active_ids("ad_id", yest_s)
     out = {}
     for key, (dfrom, dto) in periods.items():
@@ -642,7 +644,7 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
             kind, m = classify(r.get("campaign"))
             if m is None: continue          # inst-креативи показуємо (витрати/CTR з Meta)
             aid = str(r.get("ad_id") or "")
-            if not aid or aid not in active: continue
+            if not aid: continue
             a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
                                      "adset": r.get("adset_name"), "ad": r.get("ad_name"),
                                      "spend": 0.0, "leads": 0,
@@ -669,15 +671,17 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
             rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
             book = bmap.get(aid, 0) if (m in raw_ok and bk and m in bk) else None
             res.append({"m": m, "name": a["ad"], "adset": a["adset"], "campaign": a["campaign"],
+                        "act": aid in active,
                         "spend": sp, "leads": ld,
                         "cpl":  round(sp / ld, 2) if ld else None,
                         "book": book,
                         "cpa":  round(sp / book, 2) if book else None,
                         "conv": round(book / ld * 100, 1) if (book is not None and ld) else None,
                         "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"]})
-        res.sort(key=lambda c: (c["cpa"] if c["cpa"] is not None else 1e9))
+        res.sort(key=lambda c: (not c["act"], c["cpa"] if c["cpa"] is not None else 1e9))
         out[key] = res
-        print("  creatives [%-5s]: %d активних" % (key, len(res)))
+        print("  creatives [%-5s]: %d рядків (%d активних)"
+              % (key, len(res), sum(1 for c in res if c["act"])))
     return out
 
 def _graph_all(edge, fields, extra=None):
@@ -904,7 +908,7 @@ def main():
 
     try:
         _merge_periods("creatives", build_creatives(PERIODS, yest_s, bk, raw_map, raw_ok))
-        out["creativesPeriod"] = "по періодах, тільки активні"
+        out["creativesPeriod"] = "по періодах"
     except Exception as e:
         print("creatives failed -> carrying over old ones:", e)
 
