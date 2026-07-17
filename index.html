@@ -39,6 +39,7 @@ tr.grp td{background:var(--card2);color:var(--txt);font-weight:600;text-align:le
 tr.grp .gcity{color:var(--mut);font-weight:400}
 tr.grp .gsum{float:right;color:var(--mut);font-weight:400;font-size:.75rem}
 tr.grp:hover td{background:var(--card2)}
+tr.inact td{opacity:.45}
 .row{display:flex;justify-content:space-between;font-size:.82rem;padding:3px 0;border-bottom:1px dashed var(--border)}
 .row:last-child{border:none}
 .row .l{color:var(--mut)}
@@ -70,15 +71,6 @@ tr:hover td{background:var(--card2)}
 <h2>⚠️ Алерти</h2>
 <div id="alerts"></div>
 
-<div id="scSection" style="display:none">
-<h2>🚀 Масштабування</h2>
-<div class="phint">Безпечне правило: піднімати бюджет на <b>20–30%</b> і не частіше, ніж <b>раз на 2–3 дні</b> — різкіший або частіший стрибок скидає навчання ад-сета (Meta: не редагуй, поки ад-сет «навчається»). Рекомендація враховує CPA за 7 днів, частоту і дату останньої зміни бюджету з журналу кабінету.</div>
-<div style="overflow-x:auto"><table id="scTable">
-<thead><tr><th>Ад-сет · кампанія</th><th>Бюджет/день</th><th>Остання зміна бюджету</th><th>CPA · 7 днів</th><th>Рекомендація</th></tr></thead>
-<tbody></tbody></table></div>
-<div class="phint" id="scNote"></div>
-</div>
-
 <h2>По менеджерах</h2>
 <div class="tabs" id="tabs"></div>
 <div class="phint" id="phint"></div>
@@ -104,6 +96,15 @@ tr:hover td{background:var(--card2)}
 <thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="crNote"></div>
+
+<div id="scSection" style="display:none">
+<h2>🚀 Масштабування</h2>
+<div class="phint">Безпечне правило: піднімати бюджет на <b>20–30%</b> і не частіше, ніж <b>раз на 2–3 дні</b> — різкіший або частіший стрибок скидає навчання ад-сета (Meta: не редагуй, поки ад-сет «навчається»). Рекомендація враховує CPA за 7 днів, частоту і дату останньої зміни бюджету з журналу кабінету.</div>
+<div style="overflow-x:auto"><table id="scTable">
+<thead><tr><th>Ад-сет · кампанія</th><th>Бюджет/день</th><th>Остання зміна бюджету</th><th>CPA · 7 днів</th><th>CPA · місяць</th><th>Рекомендація</th></tr></thead>
+<tbody></tbody></table></div>
+<div class="phint" id="scNote"></div>
+</div>
 
 <div class="foot" id="foot"></div>
 
@@ -281,7 +282,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <div class="row"><span class="l">Ліди</span><b>${ld}</b></div>
         <div class="row"><span class="l">Записи</span><b>${bk}</b></div>
         <div class="row"><span class="l">Конверсія в запис</span><b>${conv}</b></div>
-        ${isInst(name)?'<div class="row"><span class="l">Ліди/записи</span><b>Direct · вручну</b></div>':''}
+        ${isInst(name)?'<div class="row"><span class="l">Канал</span><b>Instagram Direct</b></div>':''}
         ${roasRows(m,sp,bk)}
         ${metaRows(m,p)}
         ${p.extra(m)}
@@ -351,7 +352,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const notes=[];
     if(oldFmt) notes.push(OLDFMT_NOTE);
     if(!list.length) notes.push('Немає даних за цей період. ');
-    if(list.some(a=>isInst(a.m))) notes.push('Инста-кампанії: ліди йдуть у Direct, тому тут лише витрати/CTR/частота (ліди й записи — на картці менеджера, вручну). ');
+    if(list.some(a=>isInst(a.m))) notes.push('Инста-кампанії: ліди йдуть у Direct, тому тут лише витрати/CTR/частота (ліди й записи — на картці «Инста…»). ');
     const asMiss=[...new Set(list.filter(a=>!a.q&&!isInst(a.m)).map(a=>a.m))];
     if(asMiss.length) notes.push(`* Якість і записи по ад-сетах поки недоступні для: ${asMiss.join(', ')} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
     notes.push('Показані тільки активні ад-сети (витрати вчора/сьогодні).');
@@ -367,21 +368,21 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const cr=[];
     for(const [mgr,rows] of groupByMgr(CR[k]||[]))
       cr.push(...[...rows].sort((x,y)=>(x.cpa??1e9)-(y.cpa??1e9)));
-    document.getElementById('crTitle').textContent=`Креативи — ${p.label} · ${p.range} (тільки активні)`;
+    document.getElementById('crTitle').textContent=`Креативи — ${p.label} · ${p.range}`;
     if(cpaC) cpaC.destroy();
-    const crCh=cr.filter(c=>!isInst(c.m));   // в інсти немає CPA — на діаграмі їй нема чого робити
+    const crCh=cr.filter(c=>!isInst(c.m)&&c.act!==false);   // діаграма — тільки активні, без інсти
     cpaC=new Chart(cpaChart,{type:'bar',data:{labels:crCh.map(c=>c.name+' · '+c.m),datasets:[{label:'CPA $',data:crCh.map(c=>c.cpa),backgroundColor:crCh.map(c=>COLORS[c.m])}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
     crb.innerHTML='';
     for(const [mgr,rows] of groupByMgr(cr)){
       crb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,8));
-      for(const c of [...rows].sort((x,y)=>(x.cpa??1e9)-(y.cpa??1e9))){
-        const ii=isInst(c.m);
+      for(const c of [...rows].sort((x,y)=>((x.act===false)-(y.act===false))||((x.cpa??1e9)-(y.cpa??1e9)))){
+        const ii=isInst(c.m), ia=(c.act===false);   // ia = вже не крутиться -> сірий рядок
         const noBk=(c.book==null);
         const cls=noBk?'':(c.cpa==null?'r':(c.cpa<8?'g':c.cpa<15?'y':'r'));
         const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого'));
         const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
-        crb.insertAdjacentHTML('beforeend',`<tr>
-          <td>${c.name} · ${c.adset}</td>
+        crb.insertAdjacentHTML('beforeend',`<tr${ia?' class="inact"':''}>
+          <td>${c.name} · ${c.adset}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}</td>
           <td>${fmt(c.spend)}</td><td>${ii?'—':c.leads}</td><td>${ii?'—':fmt(c.cpl)}</td>
           <td>${c.ctr!=null?c.ctr+'%':'—'}</td>
           <td>${c.freq!=null?`<span class="tag ${fcls}">${c.freq}</span>`:'—'}</td>
@@ -392,6 +393,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const notes=[];
     if(oldFmt) notes.push(OLDFMT_NOTE);
     if(!cr.length) notes.push('Немає даних за цей період. ');
+    if(cr.some(c=>c.act===false)) notes.push('Сірі рядки з позначкою «вимкнений» — креативи без витрат вчора/сьогодні: вони вже не крутяться, показані для порівняння. ');
     if(cr.some(c=>isInst(c.m))) notes.push('Инста-креативи: ліди в Direct, тому тут лише витрати/CTR/частота. ');
     if(cr.some(c=>c.book==null&&!isInst(c.m))){
       const miss=[...new Set(cr.filter(c=>c.book==null&&!isInst(c.m)).map(c=>c.m))].join(', ');
@@ -406,6 +408,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     if(!Array.isArray(sc)||!sc.length) return;
     document.getElementById('scSection').style.display='';
     const d7map=new Map((AS.d7||[]).map(a=>[a.m+'|'+(a.campaign||'')+'|'+a.adset,a]));
+    const moMap=new Map((AS.month||[]).map(a=>[a.m+'|'+(a.campaign||'')+'|'+a.adset,a]));
     const rows=[];
     for(const s of sc){
       const a=d7map.get(s.m+'|'+(s.campaign||'')+'|'+s.adset);
@@ -436,12 +439,14 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     scb.innerHTML='';
     for(const r of rows){
       const s=r.s;
+      const mo=moMap.get(s.m+'|'+(s.campaign||'')+'|'+s.adset);
       const chg=s.chg?`${dd(s.chg.date)}${s.chg.from!=null&&s.chg.to!=null?` · ${fmt(s.chg.from)} → ${fmt(s.chg.to)}`:''}`:(s.created?`не мінявся (з ${dd(s.created)})`:'—');
       scb.insertAdjacentHTML('beforeend',`<tr>
         <td>${s.adset}<br><span style="color:var(--mut);font-size:.72rem">${s.m} · ${s.campaign||''}</span></td>
         <td><b>${fmt(s.budget)}</b>${s.lvl==='campaign'?' <span class="tag y">CBO</span>':''}</td>
         <td>${chg}</td>
         <td>${r.a?fmt(r.a.cpa):'—'}</td>
+        <td>${mo?fmt(mo.cpa):'—'}</td>
         <td><span class="tag ${r.cls}">${r.rec}</span></td></tr>`);
     }
     document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta. CBO = бюджет на рівні кампанії (спільний для її ад-сетів). «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥2 дні. Офіційне правило Meta — без редагувань, поки ад-сет «навчається» (~50 результатів після суттєвої зміни), тож для повільних ад-сетів (мало лідів) краще чекати довше.`;
@@ -464,9 +469,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль / випадковий) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
-    '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії, Прага = 3990 Kč (модель).<br>'+
+    '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії; Прага: Диана = 2 999 Kč (акція для моделей з 18.07), Даша = 3 990 Kč.<br>'+
     'Алерти про ціну запису (💰) рахуються завжди за останні 7 днів і порівнюються з чеком міста (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
-    '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta, а ліди й записи Ірина вносить вручну.<br>'+
+    '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta; ліди Парижа Meta рахує сама («ліди з листування»), записи Парижа і все по Празі Ірина вносить вручну.<br>'+
     'Дані: Meta Ads + Google-таблиця'
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
