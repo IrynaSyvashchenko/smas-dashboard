@@ -335,18 +335,14 @@ def fetch_sheet_rows(gid=None, ss=None, sheet=None):
     return rows
 
 # ---------------- БАРСЕЛОНА (Юлиана) ----------------
-# Окрема таблиця. Вкладка Віри = статуси; сирі вкладки фб3/fb. = атрибуція (ad_id).
-# ⚠️ У вкладці Віри «таргетолог» стоїть «Вера» НАВІТЬ у лідів Ірини, тому фільтр
-# «Ирина або порожньо» тут не працює. Ліди Ірини визначаємо через сирі вкладки
-# по НАЗВІ КАМПАНІЇ: "Yaliana" (кампанії Віри звуться "Yuliana" — інша буква,
-# і крутяться в чужому кабінеті). Нові кампанії Барселони мають містити
-# "Yaliana" в назві АБО просто існувати в кабінеті Ірини (barca_camps).
+# Окрема таблиця. Сирі вкладки фб3/fb. = атрибуція лідів до ad_id/adset_id
+# (для таблиць ад-сетів/креативів). Кампанії Ірини звуться "Yaliana"
+# (Вірині — "Yuliana", інша буква, чужий кабінет).
 BARCA_SS        = "1yabb6jwu15n8N9CBTdWk3ypzvc6mkldclpAu5nNpVVg"
-BARCA_VERA_GID  = "190303918"        # вкладка «Юлиана Вера 2» (статуси)
-# з 15.07 записи ведуться ще й у новій вкладці «Юлиана Ирина» — читаємо ОБИДВІ.
-# Порядок важливий: Віра перша, щоб у лідів, які є в обох, лишався старий рядок
-# (і ключ у реєстрі записів не мінявся).
-BARCA_STATUS    = ({"gid": BARCA_VERA_GID}, {"sheet": "Юлиана Ирина"})
+# ПРАВИЛО ІРИНИ (17.07): її ліди/записи = вкладка «Юлиана Ирина», і тільки вона.
+# «Де у моїй вкладці написано запис — то мій запис». Жодної атрибуції по кампаніях
+# для записів; вкладка Віри більше не читається.
+BARCA_IRYNA_SHEET = "Юлиана Ирина"
 BARCA_RAW_SHEETS = ("фб3", "fb.")    # сирі вкладки з ad_id (ліди задвоєні між ними — дедуп по телефону)
 BARCA_CAMP_KW   = ("yaliana",)
 BARCA_MGR       = "Юлиана"
@@ -356,30 +352,25 @@ def _barca_phone(r):
     return r.get("número_de_teléfono") or r.get("phone_number")
 
 def fetch_barcelona_raw(extra_camps=frozenset()):
-    """{phone9: {m, ad_id, adset_id, ad, adset}} — ліди Ірини з сирих вкладок Барселони.
-
-    Атрибуція по ПЕРШОМУ дотику: той самий телефон міг спершу прийти з кампанії
-    Віри (Yuliana), а пізніше ще раз клікнути рекламу Ірини (Yaliana). Такий лід —
-    Вірин, не рахуємо. Беремо найРАНІШИЙ рядок телефону і дивимось, чия кампанія."""
-    seen = {}   # phone9 -> {"key": created_time (порожнє = найпізніше), "mine": bool, "hit": {...}}
+    """{phone9: {m, ad_id, adset_id, ad, adset}} — прив'язка телефону до ad_id/adset_id
+    по рядках кампаній Ірини (Yaliana) у сирих вкладках. Використовується ТІЛЬКИ для
+    таблиць ад-сетів/креативів; чиї ліди й записи — вирішує вкладка «Юлиана Ирина»."""
+    out = {}
     for name in BARCA_RAW_SHEETS:
         for r in fetch_sheet_rows(ss=BARCA_SS, sheet=name):
+            camp = str(r.get("campaign_name") or "")
+            cl = camp.lower()
+            if not (any(k in cl for k in BARCA_CAMP_KW) or (camp and camp in extra_camps)):
+                continue
             ph = phone9(_barca_phone(r))
             if not ph:
                 continue
-            camp = str(r.get("campaign_name") or "")
-            cl = camp.lower()
-            mine = any(k in cl for k in BARCA_CAMP_KW) or (camp and camp in extra_camps)
-            key = str(r.get("created_time") or "") or "9999"
-            cur = seen.get(ph)
-            if cur is None or key < cur["key"]:
-                seen[ph] = {"key": key, "mine": mine,
-                            "hit": {"m": BARCA_MGR,
-                                    "ad_id": _strip_id_prefix(r.get("ad_id")),
-                                    "adset_id": _strip_id_prefix(r.get("adset_id")),
-                                    "ad": str(r.get("ad_name") or ""),
-                                    "adset": str(r.get("adset_name") or "")}}
-    return {ph: v["hit"] for ph, v in seen.items() if v["mine"]}
+            out[ph] = {"m": BARCA_MGR,
+                       "ad_id": _strip_id_prefix(r.get("ad_id")),
+                       "adset_id": _strip_id_prefix(r.get("adset_id")),
+                       "ad": str(r.get("ad_name") or ""),
+                       "adset": str(r.get("adset_name") or "")}
+    return out
 
 def _iryna_row(r):
     t = str(r.get("таргетолог") or "").strip().lower()
@@ -472,32 +463,14 @@ def compute_bookings(barca_camps=frozenset()):
                                   lambda r: r.get("phone_number"), _iryna_row)
         _print_mgr(mgr, res[mgr])
 
-    # Барселона: ліди Ірини = телефони з сирих вкладок її кампаній (Yaliana)
+    # Барселона: ліди і записи Юліани = вкладка «Юлиана Ирина» (правило Ірини:
+    # «де у моїй вкладці написано запис — то мій запис»). Без фільтрів по кампаніях.
     try:
-        ya = fetch_barcelona_raw(barca_camps)
-        if ya:
-            rows = []
-            for src in BARCA_STATUS:
-                try:
-                    rows += fetch_sheet_rows(ss=BARCA_SS, **src)
-                except Exception as e:
-                    print("  барселона: статусна вкладка %s не прочиталась ->" % src, str(e)[:80])
-            # лід може бути в обох статусних вкладках: один рядок на телефон,
-            # пріоритет рядку з позначкою запису (а при рівності — першій вкладці)
-            byph = {}
-            for r in rows:
-                ph = phone9(_barca_phone(r))
-                if not ph:
-                    continue
-                if ph not in byph or (is_booked(r) and not is_booked(byph[ph])):
-                    byph[ph] = r
-            phones = set(ya)
-            res[BARCA_MGR] = _tally_manager(
-                list(byph.values()), today, _barca_phone,
-                lambda r: phone9(_barca_phone(r)) in phones)
-            _print_mgr(BARCA_MGR, res[BARCA_MGR])
-        else:
-            print("  барселона: у сирих вкладках немає лідів Ірини (Yaliana)")
+        rows = fetch_sheet_rows(ss=BARCA_SS, sheet=BARCA_IRYNA_SHEET)
+        res[BARCA_MGR] = _tally_manager(
+            rows, today, _barca_phone,
+            lambda r: bool(phone9(_barca_phone(r))))
+        _print_mgr(BARCA_MGR, res[BARCA_MGR])
     except Exception as e:
         print("  барселона FAIL ->", e)
     return res or None
@@ -563,7 +536,7 @@ def fetch_raw_map(barca_camps=frozenset()):
             print("  сира вкладка %-6s -> %d лідів з ID" % (mgr, n))
         except Exception as e:
             print("  сира вкладка НЕ прочиталась:", mgr, "->", str(e)[:90])
-    # Барселона (окрема таблиця, ліди тільки з кампаній Ірини)
+    # Барселона (окрема таблиця, прив'язка тільки по кампаніях Ірини)
     try:
         n = 0
         for ph, hit in fetch_barcelona_raw(barca_camps).items():
