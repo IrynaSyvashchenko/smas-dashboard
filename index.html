@@ -448,7 +448,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       const okDate=since?dd(addD(since,2)):null;
       let rec,cls;
       if(days!=null&&days<2)
-        {rec=`зачекай до ${okDate} — остання зміна ${dd(since)}`;cls='y';}
+        {rec=`зачекай до ${okDate} — остання зміна ${dd(since)}${s.chg?.time?` о ${s.chg.time}`:''}`;cls='y';}
       else if(freq!=null&&freq>=2.2)
         {rec=`частота ${freq} — спершу свіжий креатив`;cls='y';}
       else if(isInst(s.m))
@@ -469,7 +469,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     for(const r of rows){
       const s=r.s;
       const mo=moMap.get(s.m+'|'+(s.campaign||'')+'|'+s.adset);
-      const chg=s.chg?`${dd(s.chg.date)}${s.chg.from!=null&&s.chg.to!=null?` · ${fmt(s.chg.from)} → ${fmt(s.chg.to)}`:''}`:(s.created?`не мінявся (з ${dd(s.created)})`:'—');
+      const chg=s.chg?`${dd(s.chg.date)}${s.chg.time?` о ${s.chg.time}`:''}${s.chg.from!=null&&s.chg.to!=null?` · ${fmt(s.chg.from)} → ${fmt(s.chg.to)}`:''}`:(s.created?`не мінявся (з ${dd(s.created)})`:'—');
       scb.insertAdjacentHTML('beforeend',`<tr>
         <td>${s.adset}<br><span style="color:var(--mut);font-size:.72rem">${s.m} · ${s.campaign||''}</span></td>
         <td><b>${fmt(s.budget)}</b>${s.lvl==='campaign'?' <span class="tag y">CBO</span>':''}</td>
@@ -478,7 +478,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <td>${mo?fmt(mo.cpa):'—'}</td>
         <td><span class="tag ${r.cls}">${r.rec}</span></td></tr>`);
     }
-    document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta (час подій переведено в празький). CBO = бюджет на рівні кампанії (спільний для її ад-сетів). «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥2 повні дні. Офіційне правило Meta — без редагувань, поки ад-сет «навчається» (~50 результатів після суттєвої зміни), тож для повільних ад-сетів (мало лідів) краще чекати довше.`;
+    document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta (час подій переведено в празький). ВАЖЛИВО: неопубліковані чернетки з Ads Manager тут НЕ видно — поки правка не опублікована, реклама крутиться на старому бюджеті. CBO = бюджет на рівні кампанії. «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥2 повні дні. Офіційне правило Meta — без редагувань, поки ад-сет «навчається» (~50 результатів після суттєвої зміни), тож для повільних ад-сетів (мало лідів) краще чекати довше.`;
   }
 
   render('yest');
