@@ -746,6 +746,18 @@ def _graph_all(edge, fields, extra=None):
         url = (payload.get("paging") or {}).get("next")
     return out
 
+def _local_date(ts):
+    """Meta віддає event_time/created_time в UTC ('2026-07-16T23:11:45+0000') —
+    зміна о 01:11 за Прагою пише дату «вчора». Конвертуємо в TZ (+2), інакше
+    кулдаун «2 дні без змін» рахується на день коротшим, ніж насправді."""
+    s = str(ts or "")
+    try:
+        if len(s) >= 5 and s[-5] in "+-" and ":" not in s[-5:]:
+            s = s[:-2] + ":" + s[-2:]          # '+0000' -> '+00:00' для fromisoformat
+        return datetime.datetime.fromisoformat(s).astimezone(TZ).date().isoformat()
+    except Exception:
+        return s[:10]
+
 def fetch_scaling():
     """Блок «Масштабування»: активні ад-сети з денним бюджетом (свій або CBO-кампанії)
     + остання зміна бюджету з журналу кабінету (/activities). Рекомендацію рахує сайт.
@@ -792,8 +804,8 @@ def fetch_scaling():
         ev = events.get(evt_id)
         out.append({"m": m, "adset": a.get("name"), "campaign": camp.get("name"),
                     "budget": round(num(b) / 100.0, 2) if num(b) else None,
-                    "lvl": lvl, "created": str(a.get("created_time") or "")[:10],
-                    "chg": ({"date": ev["t"][:10], "from": ev["old"], "to": ev["new"]} if ev else None)})
+                    "lvl": lvl, "created": _local_date(a.get("created_time")),
+                    "chg": ({"date": _local_date(ev["t"]), "from": ev["old"], "to": ev["new"]} if ev else None)})
     return out
 
 # ---------------- MAIN ----------------
