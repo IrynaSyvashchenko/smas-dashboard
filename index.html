@@ -171,7 +171,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const oldFmt=Array.isArray(D.adsets)||Array.isArray(D.creatives);
   const normP=x=>Array.isArray(x)?{yest:x,d7:x,month:x,all:x}:(x||{});
   const AS=normP(D.adsets), CR=normP(D.creatives);
-  const OLDFMT_NOTE='⚠️ Дані таблиці поки за останні 7 днів (старий формат) — перемикання періодів запрацює після наступного автооновлення (до 2 год). ';
+  const OLDFMT_NOTE='⚠️ Дані таблиці поки за останні 7 днів (старий формат) — перемикання періодів запрацює після наступного автооновлення. ';
 
   // ROAS = записи x середній чек / витрати. Оцінка: запис ще не оплачена процедура.
   const CURSIGN={EUR:'€',CZK:'Kč',USD:'$'};
@@ -179,10 +179,14 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const c=m.check;
     if(!c||!sp) return '';
     const rev=bk*c.usd, r=rev/sp;
-    const cls=r>=2?'g':r>=1?'y':'r';
     return `<div class="row"><span class="l">Дохід (${bk} × ${c.amount} ${CURSIGN[c.cur]||c.cur})</span><b>${fmt(rev)}</b></div>
-            <div class="row"><span class="l">ROAS (оцінка)</span><b><span class="tag ${cls}">${r.toFixed(2)}</span></b></div>`;
+            <div class="row"><span class="l">ROAS (оцінка)</span><b>${r.toFixed(2)}</b></div>`;
   };
+  // пороги CPA по містах (правило Ірини): Прага <10 зел / до 15 жовт / далі черв;
+  // Париж і Барселона <20 / до 25 / далі червоний
+  const cpaT=city=>city==='Прага'?[10,15]:[20,25];
+  const cpaColor=(city,v)=>{if(v==null)return '';const t=cpaT(city);
+    return v<t[0]?'var(--good)':v<t[1]?'var(--warn)':'var(--bad)'};
 
   const tabsEl=document.getElementById('tabs');
   Object.keys(P).forEach(k=>{
@@ -241,6 +245,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     }
     for(const c of (CR[k]||[])){
       if(deadAdsets.has(c.adset)) continue;   // алерт по цілому ад-сету вже є
+      if(c.act===false) continue;             // вимкнений креатив — дій не потребує
       if(!isInst(c.m)&&c.spend>=5&&c.leads===0)   // для інсти «0 лідів» — не помилка (Direct)
         A.push(['bad',`💸 Креатив <b>${c.name}</b> (${c.m}): <b>${fmt(c.spend)}</b> без лідів — вимикай.`]);
       if(c.freq!=null&&c.freq>=2.5)
@@ -279,11 +284,12 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       tSp+=sp; tLd+=ld; tBk+=bk;
       if(m.check&&sp){ tRev+=bk*m.check.usd; tRevSp+=sp; }
       const cpl=ld?sp/ld:null, cpa=bk?sp/bk:null, conv=ld?Math.round(bk/ld*1000)/10+'%':'—';
+      const cCol=cpaColor(m.city,cpa);
       cards.push(`<div class="card">
         <h3>${name} <span class="city">${m.city}</span></h3>
         <div class="bigrow">
           <div><div class="big">${fmt(cpl)}</div><div class="lbl">CPL · лід</div></div>
-          <div><div class="big">${fmt(cpa)}</div><div class="lbl">CPA · запис</div></div>
+          <div><div class="big"${cCol?` style="color:${cCol}"`:''}>${fmt(cpa)}</div><div class="lbl">CPA · запис</div></div>
         </div>
         <div class="row"><span class="l">Витрати</span><b>${fmt(sp)}</b></div>
         <div class="row"><span class="l">Ліди</span><b>${ld}</b></div>
@@ -307,7 +313,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       <div class="row"><span class="l">Ліди</span><b>${tLd}</b></div>
       <div class="row"><span class="l">Записи</span><b>${tBk}</b></div>
       <div class="row"><span class="l">Конверсія в запис</span><b>${tLd?Math.round(tBk/tLd*1000)/10+'%':'—'}</b></div>
-      ${tRoas!=null?`<div class="row"><span class="l">ROAS (оцінка)</span><b><span class="tag ${tRoas>=2?'g':tRoas>=1?'y':'r'}">${tRoas.toFixed(2)}</span></b></div>`:''}
+      ${tRoas!=null?`<div class="row"><span class="l">ROAS (оцінка)</span><b>${tRoas.toFixed(2)}</b></div>`:''}
     </div>`+cards.join(''));
   }
 
@@ -407,8 +413,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       for(const c of [...rows].sort((x,y)=>((x.act===false)-(y.act===false))||((x.cpa??1e9)-(y.cpa??1e9)))){
         const ii=isInst(c.m), ia=(c.act===false);   // ia = вже не крутиться -> сірий рядок
         const noBk=(c.book==null);
-        const cls=noBk?'':(c.cpa==null?'r':(c.cpa<8?'g':c.cpa<15?'y':'r'));
-        const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<8?'топ':c.cpa<15?'норма':'дорого'));
+        const ct2=cpaT(M[c.m]?.city);               // пороги CPA міста цього менеджера
+        const cls=noBk?'':(c.cpa==null?'r':(c.cpa<ct2[0]?'g':c.cpa<ct2[1]?'y':'r'));
+        const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<ct2[0]?'топ':c.cpa<ct2[1]?'норма':'дорого'));
         const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
         crb.insertAdjacentHTML('beforeend',`<tr${ia?' class="inact"':''}>
           <td>${c.name} · ${c.adset}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}</td>
@@ -426,8 +433,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     if(cr.some(c=>isInst(c.m))) notes.push('Инста-креативи: ліди в Direct, тому тут лише витрати/CTR/частота. ');
     if(cr.some(c=>c.book==null&&!isInst(c.m))){
       const miss=[...new Set(cr.filter(c=>c.book==null&&!isInst(c.m)).map(c=>c.m))].join(', ');
-      notes.push(`* Записи/CPA по креативах ще недоступні для: ${miss} — їхні сирі вкладки не прочитались. Підтягнеться саме.`);
+      notes.push(`* Записи/CPA по креативах ще недоступні для: ${miss} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
     }
+    notes.push('Пороги CPA: Прага — топ <$10, норма до $15; Париж і Барселона — топ <$20, норма до $25.');
     document.getElementById('crNote').textContent=notes.join('');
   }
 
@@ -506,3 +514,4 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
 </script>
 </body>
 </html>
+"}
