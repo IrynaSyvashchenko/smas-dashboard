@@ -35,6 +35,8 @@ h2{font-size:1.1rem;margin:28px 0 12px;color:var(--acc)}
 .card.total{border-color:var(--acc)}
 .morealerts summary{cursor:pointer;color:var(--mut);font-size:.82rem;padding:5px 2px;list-style-position:inside}
 .morealerts[open] summary{margin-bottom:6px}
+tr.city td{background:var(--bg);color:var(--txt);font-weight:800;text-align:left;padding:16px 10px 8px;font-size:1.05rem;letter-spacing:.04em;border-bottom:2px solid var(--acc)}
+tr.city:hover td{background:var(--bg)}
 tr.grp td{background:var(--card2);color:var(--txt);font-weight:600;text-align:left;padding:9px 10px;font-size:.85rem}
 tr.grp .gcity{color:var(--mut);font-weight:400}
 tr.grp .gsum{float:right;color:var(--mut);font-weight:400;font-size:.75rem}
@@ -318,10 +320,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const gsp=rows.reduce((s,x)=>s+(x.spend||0),0), gld=rows.reduce((s,x)=>s+(x.leads||0),0);
     const gbk=rows.reduce((s,x)=>s+(x.book||0),0);
     const gstat=isInst(mgr)?`${fmt(gsp)} · ліди в Direct`:`${fmt(gsp)} · лідів: ${gld} · записів: ${gbk}`;
-    return `<tr class="grp"><td colspan="${colspan}" style="border-left:3px solid ${COLORS[mgr]||'#4f8cff'}">`+
-      (isInst(mgr)?`${mgr}`:`<span class="gcity">${M[mgr]?.city||''} ·</span> ${mgr}`)+
+    return `<tr class="grp"><td colspan="${colspan}" style="border-left:3px solid ${COLORS[mgr]||'#4f8cff'}">${mgr}`+
       `<span class="gsum">${gstat}</span></td></tr>`;
   };
+  // великий заголовок міста перед його менеджерами (Прага -> Париж -> Барселона)
+  const cityRow=(city,colspan)=>`<tr class="city"><td colspan="${colspan}">📍 ${city}</td></tr>`;
 
   // ---- ад-сети (по періодах) ----
   const asb=document.querySelector('#asTable tbody');
@@ -330,7 +333,10 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const p=P[k], list=AS[k]||[];
     document.getElementById('asTitle').textContent=`Ад-сети (аудиторія · гео) — ${p.label} · ${p.range}`;
     asb.innerHTML='';
+    let asCity='';
     for(const [mgr,rows] of groupByMgr(list)){
+      const ct=M[mgr]?.city||'';
+      if(ct&&ct!==asCity){asb.insertAdjacentHTML('beforeend',cityRow(ct,10));asCity=ct;}
       asb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,10));
       for(const a of [...rows].sort((x,y)=>(y.spend||0)-(x.spend||0))){
         const ii=isInst(a.m);   // ліди інсти в Direct: замість нулів чесне «—»
@@ -373,7 +379,10 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const crCh=cr.filter(c=>!isInst(c.m)&&c.act!==false);   // діаграма — тільки активні, без інсти
     cpaC=new Chart(cpaChart,{type:'bar',data:{labels:crCh.map(c=>c.name+' · '+c.m),datasets:[{label:'CPA $',data:crCh.map(c=>c.cpa),backgroundColor:crCh.map(c=>COLORS[c.m])}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
     crb.innerHTML='';
+    let crCity='';
     for(const [mgr,rows] of groupByMgr(cr)){
+      const ct=M[mgr]?.city||'';
+      if(ct&&ct!==crCity){crb.insertAdjacentHTML('beforeend',cityRow(ct,8));crCity=ct;}
       crb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,8));
       for(const c of [...rows].sort((x,y)=>((x.act===false)-(y.act===false))||((x.cpa??1e9)-(y.cpa??1e9)))){
         const ii=isInst(c.m), ia=(c.act===false);   // ia = вже не крутиться -> сірий рядок
