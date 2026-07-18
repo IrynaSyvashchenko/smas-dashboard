@@ -756,30 +756,60 @@ def _local_date(ts):
     except Exception:
         return s[:10]
 
-try:
-    from zoneinfo import ZoneInfo
-    _PACIFIC = ZoneInfo("America/Los_Angeles")
-except Exception:                               # фолбек без tzdata: літній PDT
-    _PACIFIC = datetime.timezone(datetime.timedelta(hours=-7))
+_ACT_TZ = None   # часовий пояс рекламного кабінету (лениво з API)
+
+def _account_tz():
+    """Часовий пояс РЕКЛАМНОГО КАБІНЕТУ — саме в ньому Ads Manager показує журнал
+    змін, тому і ми показуємо час у ньому, щоб збігалося з тим, що бачить Ірина."""
+    global _ACT_TZ
+    if _ACT_TZ is not None:
+        return _ACT_TZ
+    tzname = off = None
+    try:
+        url = "%s/act_%s?%s" % (GRAPH_API, ACCOUNT, urllib.parse.urlencode(
+            {"fields": "timezone_name,timezone_offset_hours_utc",
+             "access_token": META_TOKEN}))
+        info = http_json(url)
+        tzname = info.get("timezone_name")
+        off = info.get("timezone_offset_hours_utc")
+        print("  account tz:", tzname, "| offset:", off)
+    except Exception as e:
+        print("  account tz FAIL:", str(e)[:100])
+    try:
+        from zoneinfo import ZoneInfo
+        _ACT_TZ = ZoneInfo(tzname)
+    except Exception:
+        _ACT_TZ = (datetime.timezone(datetime.timedelta(hours=float(off)))
+                   if off is not None else TZ)
+    return _ACT_TZ
 
 def _activity_local_dt(ts):
-    """event_time з /activities Meta віддає за КАЛІФОРНІЙСЬКИМ часом, хоч і з міткою
-    +0000 (легасі-грабля Graph API — перевірено на зміні бюджету Діани: 17.07 01:11
-    за Прагою прийшло як 16.07 з «+0000»). Перечитуємо годинник як Los_Angeles і
-    переводимо в празький — інакше кулдаун «2 дні» рахується на день коротшим.
-    Повертає datetime у TZ або None, якщо не розпарсилось."""
+    """event_time з /activities — справжній UTC. Кабінет показує журнал у часовому
+    поясі рекламного акаунта (НЕ празькому!) — переводимо туди ж, щоб дата й час на
+    дашборді збігалися з журналом Ads Manager. (Зміна Діани «17.07 01:11» у кабінеті
+    прийшла як 2026-07-16T21:11+0000 — різниця рівно зсув пояса кабінету.)
+    Повертає datetime або None, якщо не розпарсилось."""
     s = str(ts or "")
     try:
         if len(s) >= 5 and s[-5] in "+-" and ":" not in s[-5:]:
             s = s[:-2] + ":" + s[-2:]
-        dt = datetime.datetime.fromisoformat(s)
-        if dt.utcoffset() is not None and dt.utcoffset() == datetime.timedelta(0):
-            dt = dt.replace(tzinfo=None)        # брехлива мітка UTC — знімаємо
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=_PACIFIC)
-        return dt.astimezone(TZ)
+        return datetime.datetime.fromisoformat(s).astimezone(_account_tz())
     except Exception:
         return None
+
+def _budget_amt(v):
+    """Сума з extra_data: центи рядком/числом або вкладений обʼєкт."""
+    if isinstance(v, str) and v[:1] in "{[":
+        try:
+            v = json.loads(v)
+        except Exception:
+            pass
+    if isinstance(v, dict):
+        for k in ("daily_budget", "lifetime_budget", "budget", "value", "amount"):
+            if v.get(k) is not None:
+                v = v[k]
+                break
+    return round(num(v) / 100.0, 2) if num(v) > 0 else None
 
 def fetch_scaling():
     """Блок «Масштабування»: активні ад-сети з денним бюджетом (свій або CBO-кампанії)
@@ -792,22 +822,29 @@ def fetch_scaling():
                         "campaign{id,name,daily_budget}")
     # журнал змін бюджету: object_id -> остання подія (бюджети Meta віддає в центах)
     events = {}
+    dbg = 0
     try:
         for ev in _graph_all("activities", "event_time,event_type,object_id,extra_data",
                              {"since": DATE_FROM, "limit": "500"}):
             et = str(ev.get("event_type") or "").lower()
             if "budget" not in et:
                 continue
+            if dbg < 8:   # діагностика в лог Actions: сирий формат подій
+                print("  budget ev:", ev.get("event_time"), "|", et, "|",
+                      str(ev.get("extra_data"))[:160])
+                dbg += 1
             oid = str(ev.get("object_id") or "")
             t = str(ev.get("event_time") or "")
             if not oid or (oid in events and t <= events[oid]["t"]):
                 continue
             old = new = None
             try:
-                x = json.loads(ev.get("extra_data") or "{}")
+                x = ev.get("extra_data") or {}
+                if isinstance(x, str):
+                    x = json.loads(x or "{}")
                 # нульові/порожні суми Meta пише для частини подій — показуємо тільки реальні
-                if num(x.get("old_value")) > 0: old = round(num(x.get("old_value")) / 100.0, 2)
-                if num(x.get("new_value")) > 0: new = round(num(x.get("new_value")) / 100.0, 2)
+                old = _budget_amt(x.get("old_value"))
+                new = _budget_amt(x.get("new_value"))
             except Exception:
                 pass
             events[oid] = {"t": t, "old": old, "new": new}
