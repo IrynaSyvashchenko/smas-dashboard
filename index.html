@@ -33,6 +33,7 @@ h2{font-size:1.1rem;margin:28px 0 12px;color:var(--acc)}
 .bigrow .big{margin:0}
 .bigrow .lbl{font-size:.7rem;color:var(--mut);margin-top:1px}
 .card.total{border-color:var(--acc)}
+.citydiv{grid-column:1/-1;font-weight:800;font-size:1.05rem;letter-spacing:.04em;padding:12px 2px 4px;border-bottom:2px solid var(--acc)}
 .morealerts summary{cursor:pointer;color:var(--mut);font-size:.82rem;padding:5px 2px;list-style-position:inside}
 .morealerts[open] summary{margin-bottom:6px}
 tr.city td{background:var(--bg);color:var(--txt);font-weight:800;text-align:left;padding:16px 10px 8px;font-size:1.05rem;letter-spacing:.04em;border-bottom:2px solid var(--acc)}
@@ -266,7 +267,14 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     el.innerHTML='';
     let tSp=0,tLd=0,tBk=0,tRev=0,tRevSp=0;
     const cards=[];
-    for(const [name,m] of Object.entries(M)){
+    // картки згруповані по містах: Прага -> Париж -> Барселона, з роздільником
+    const ordered=Object.keys(M).sort((a,b)=>{
+      const ia=CITY_ORDER.indexOf(M[a].city), ib=CITY_ORDER.indexOf(M[b].city);
+      return ((ia<0?99:ia)-(ib<0?99:ib))||a.localeCompare(b);
+    });
+    let cardCity='';
+    for(const name of ordered){ const m=M[name];
+      if(m.city&&m.city!==cardCity){cards.push(`<div class="citydiv">📍 ${m.city}</div>`);cardCity=m.city;}
       let sp=0,ld=0;
       m.dates.forEach((d,i)=>{ if(p.pred(d)){ sp+=m.spend[i]||0; ld+=m.leads[i]||0; } });
       sp=Math.round(sp*100)/100;
@@ -382,7 +390,17 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       for(const c of crCh){const ct=M[c.m]?.city||'';
         if(ct&&ct!==cc){chI.push({l:'📍 '+ct.toUpperCase(),v:null,col:'rgba(0,0,0,0)'});cc=ct;}
         chI.push({l:c.name+' · '+c.m,v:c.cpa,col:COLORS[c.m]});}}
-    cpaC=new Chart(cpaChart,{type:'bar',data:{labels:chI.map(x=>x.l),datasets:[{label:'CPA $',data:chI.map(x=>x.v),backgroundColor:chI.map(x=>x.col)}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
+    // висота під кількість рядків + ЖОДНОГО пропуску підписів (autoSkip губив назви,
+    // і бари візуально з'їжджали відносно креативів)
+    const cv=document.getElementById('cpaChart');
+    cv.style.maxHeight='none';
+    cv.parentElement.style.height=(chI.length*26+70)+'px';
+    cpaC=new Chart(cv,{type:'bar',data:{labels:chI.map(x=>x.l),datasets:[{label:'CPA $',data:chI.map(x=>x.v),backgroundColor:chI.map(x=>x.col)}]},
+      options:{indexAxis:'y',maintainAspectRatio:false,
+        scales:{y:{ticks:{autoSkip:false,
+          color:c=>String(chI[c.index]?.l||'').startsWith('📍')?'#e8ecf4':'#8b96ab',
+          font:c=>String(chI[c.index]?.l||'').startsWith('📍')?{weight:'800',size:13}:{size:11}}}},
+        plugins:{legend:{display:false}}}});
     crb.innerHTML='';
     let crCity='';
     for(const [mgr,rows] of groupByMgr(cr)){
@@ -463,7 +481,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <td>${mo?fmt(mo.cpa):'—'}</td>
         <td><span class="tag ${r.cls}">${r.rec}</span></td></tr>`);
     }
-    document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta. CBO = бюджет на рівні кампанії (спільний для її ад-сетів). «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥2 дні. Офіційне правило Meta — без редагувань, поки ад-сет «навчається» (~50 результатів після суттєвої зміни), тож для повільних ад-сетів (мало лідів) краще чекати довше.`;
+    document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta (час подій переведено в празький). CBO = бюджет на рівні кампанії (спільний для її ад-сетів). «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥2 повні дні. Офіційне правило Meta — без редагувань, поки ад-сет «навчається» (~50 результатів після суттєвої зміни), тож для повільних ад-сетів (мало лідів) краще чекати довше.`;
   }
 
   render('yest');
