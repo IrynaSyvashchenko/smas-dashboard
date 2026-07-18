@@ -762,11 +762,12 @@ try:
 except Exception:                               # фолбек без tzdata: літній PDT
     _PACIFIC = datetime.timezone(datetime.timedelta(hours=-7))
 
-def _activity_local_date(ts):
+def _activity_local_dt(ts):
     """event_time з /activities Meta віддає за КАЛІФОРНІЙСЬКИМ часом, хоч і з міткою
     +0000 (легасі-грабля Graph API — перевірено на зміні бюджету Діани: 17.07 01:11
     за Прагою прийшло як 16.07 з «+0000»). Перечитуємо годинник як Los_Angeles і
-    переводимо в празький — інакше кулдаун «2 дні» рахується на день коротшим."""
+    переводимо в празький — інакше кулдаун «2 дні» рахується на день коротшим.
+    Повертає datetime у TZ або None, якщо не розпарсилось."""
     s = str(ts or "")
     try:
         if len(s) >= 5 and s[-5] in "+-" and ":" not in s[-5:]:
@@ -776,9 +777,9 @@ def _activity_local_date(ts):
             dt = dt.replace(tzinfo=None)        # брехлива мітка UTC — знімаємо
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=_PACIFIC)
-        return dt.astimezone(TZ).date().isoformat()
+        return dt.astimezone(TZ)
     except Exception:
-        return s[:10]
+        return None
 
 def fetch_scaling():
     """Блок «Масштабування»: активні ад-сети з денним бюджетом (свій або CBO-кампанії)
@@ -824,10 +825,16 @@ def fetch_scaling():
         if not num(b) and num(camp.get("daily_budget")):
             b = camp.get("daily_budget"); lvl = "campaign"; evt_id = str(camp.get("id"))
         ev = events.get(evt_id)
+        chg = None
+        if ev:
+            ldt = _activity_local_dt(ev["t"])
+            chg = {"date": ldt.date().isoformat() if ldt else str(ev["t"])[:10],
+                   "time": ldt.strftime("%H:%M") if ldt else None,
+                   "from": ev["old"], "to": ev["new"]}
         out.append({"m": m, "adset": a.get("name"), "campaign": camp.get("name"),
                     "budget": round(num(b) / 100.0, 2) if num(b) else None,
                     "lvl": lvl, "created": _local_date(a.get("created_time")),
-                    "chg": ({"date": _activity_local_date(ev["t"]), "from": ev["old"], "to": ev["new"]} if ev else None)})
+                    "chg": chg})
     return out
 
 # ---------------- MAIN ----------------
