@@ -26,14 +26,13 @@ h2{font-size:1.1rem;margin:28px 0 12px;color:var(--acc)}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px}
 .card h3{font-size:1rem;display:flex;justify-content:space-between;align-items:center}
-.city{font-size:.7rem;color:var(--mut);background:var(--card2);padding:2px 8px;border-radius:10px}
+.city{font-size:.72rem;font-weight:700;color:var(--txt);background:var(--card2);border:1px solid var(--acc);padding:2px 9px;border-radius:10px}
 .big{font-size:1.6rem;font-weight:700;margin:8px 0 2px}
 .big small{font-size:.75rem;color:var(--mut);font-weight:400}
 .bigrow{display:flex;gap:22px;margin:8px 0 8px}
 .bigrow .big{margin:0}
 .bigrow .lbl{font-size:.7rem;color:var(--mut);margin-top:1px}
 .card.total{border-color:var(--acc)}
-.citydiv{grid-column:1/-1;font-weight:800;font-size:1.05rem;letter-spacing:.04em;padding:12px 2px 4px;border-bottom:2px solid var(--acc)}
 .morealerts summary{cursor:pointer;color:var(--mut);font-size:.82rem;padding:5px 2px;list-style-position:inside}
 .morealerts[open] summary{margin-bottom:6px}
 tr.city td{background:var(--bg);color:var(--txt);font-weight:800;text-align:left;padding:16px 10px 8px;font-size:1.05rem;letter-spacing:.04em;border-bottom:2px solid var(--acc)}
@@ -267,14 +266,12 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     el.innerHTML='';
     let tSp=0,tLd=0,tBk=0,tRev=0,tRevSp=0;
     const cards=[];
-    // картки згруповані по містах: Прага -> Париж -> Барселона, з роздільником
+    // картки просто ВПОРЯДКОВАНІ по містах: Прага -> Париж -> Барселона (без роздільників)
     const ordered=Object.keys(M).sort((a,b)=>{
       const ia=CITY_ORDER.indexOf(M[a].city), ib=CITY_ORDER.indexOf(M[b].city);
       return ((ia<0?99:ia)-(ib<0?99:ib))||a.localeCompare(b);
     });
-    let cardCity='';
     for(const name of ordered){ const m=M[name];
-      if(m.city&&m.city!==cardCity){cards.push(`<div class="citydiv">📍 ${m.city}</div>`);cardCity=m.city;}
       let sp=0,ld=0;
       m.dates.forEach((d,i)=>{ if(p.pred(d)){ sp+=m.spend[i]||0; ld+=m.leads[i]||0; } });
       sp=Math.round(sp*100)/100;
