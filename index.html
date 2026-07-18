@@ -377,7 +377,12 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     document.getElementById('crTitle').textContent=`Креативи — ${p.label} · ${p.range}`;
     if(cpaC) cpaC.destroy();
     const crCh=cr.filter(c=>!isInst(c.m)&&c.act!==false);   // діаграма — тільки активні, без інсти
-    cpaC=new Chart(cpaChart,{type:'bar',data:{labels:crCh.map(c=>c.name+' · '+c.m),datasets:[{label:'CPA $',data:crCh.map(c=>c.cpa),backgroundColor:crCh.map(c=>COLORS[c.m])}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
+    // групування діаграми по містах: рядок-заголовок «📍 Місто» без стовпчика
+    const chI=[];{let cc='';
+      for(const c of crCh){const ct=M[c.m]?.city||'';
+        if(ct&&ct!==cc){chI.push({l:'📍 '+ct.toUpperCase(),v:null,col:'rgba(0,0,0,0)'});cc=ct;}
+        chI.push({l:c.name+' · '+c.m,v:c.cpa,col:COLORS[c.m]});}}
+    cpaC=new Chart(cpaChart,{type:'bar',data:{labels:chI.map(x=>x.l),datasets:[{label:'CPA $',data:chI.map(x=>x.v),backgroundColor:chI.map(x=>x.col)}]},options:{indexAxis:'y',plugins:{legend:{display:false}}}});
     crb.innerHTML='';
     let crCity='';
     for(const [mgr,rows] of groupByMgr(cr)){
