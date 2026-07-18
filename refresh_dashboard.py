@@ -95,8 +95,11 @@ def check_usd_node(m):
 # Google Sheet manager tabs, read through the Apps Script bridge (gid = tab id in the sheet).
 # If a tab can't be read, that manager's fetch fails softly and her bookings are carried over.
 SHEET_ID = "1sOFTQ3NTeEEFrDbUjdl3p7Jhlx-Fk7duQhk43Rikxx8"
+# Мага з 18.07 переїхала в головну таблицю: CRM-вкладка «Мага Ирина» (як у всіх),
+# сира вкладка fb5 (див. RAW_GID) — стара вкладка в барселонській таблиці видалена.
 MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
-               "Алиса": "36427361", "Саида": "2065248461", "Даша": "1406387900"}
+               "Алиса": "36427361", "Саида": "2065248461", "Даша": "1406387900",
+               "Мага": "1445117368"}
 STATUS_FIELDS = ["первый_звонок", "первое_сообщение", "второй_звонок", "второе_сообщение",
                  "третий_звонок", "третье_сообщение", "третье_сообщение_",
                  "написал_на_whatsapp", "написал_на_whatsapp_1", "написал_на_whatsapp_2", "lead_status"]
@@ -356,18 +359,6 @@ BARCA_RAW_SHEETS = ("фб3", "fb.")    # сирі вкладки з ad_id (лі�
 BARCA_CAMP_KW   = ("yaliana",)
 BARCA_MGR       = "Юлиана"
 
-# Мага (РК «Мага», з 18.07, місто ПАРИЖ). Її вкладка «Мага Ирина» живе в
-# барселонській таблиці й сама в сирому форматі лід-форм (є ad_id/adset_id) —
-# служить і для записів, і для атрибуції. У вкладці лежить старий дамп червневих
-# лідів чужих кампаній (Віра, «YULIANA», до 01.07) — ріжемо все до старту РК.
-BARCA_MAGA_SHEET = "Мага Ирина"
-BARCA_MAGA_MGR   = "Мага"
-BARCA_MAGA_START = "2026-07-18"
-
-def _maga_row_ok(r):
-    return (bool(phone9(_barca_phone(r)))
-            and str(r.get("created_time") or "")[:10] >= BARCA_MAGA_START)
-
 def _barca_phone(r):
     # телефон лежить то в número_de_teléfono, то в phone_number — беремо що є
     return r.get("número_de_teléfono") or r.get("phone_number")
@@ -494,15 +485,6 @@ def compute_bookings(barca_camps=frozenset()):
         _print_mgr(BARCA_MGR, res[BARCA_MGR])
     except Exception as e:
         print("  барселона FAIL ->", e)
-
-    # Мага: та сама логіка — її вкладка, ліди/записи тільки звідти,
-    # але тільки рядки з дати старту РК (старий дамп у вкладці не її).
-    try:
-        rows = fetch_sheet_rows(ss=BARCA_SS, sheet=BARCA_MAGA_SHEET)
-        res[BARCA_MAGA_MGR] = _tally_manager(rows, today, _barca_phone, _maga_row_ok)
-        _print_mgr(BARCA_MAGA_MGR, res[BARCA_MAGA_MGR])
-    except Exception as e:
-        print("  барселона (Мага) FAIL ->", e)
     return res or None
 
 # ---------------- META: метрики по періодах + свіжі креативи ----------------
@@ -513,6 +495,7 @@ RAW_GID = {
     "Алиса": "448806878",    # fb2
     "Таня":  "651975206",    # fb3
     "Даша":  "871924069",    # fb4
+    "Мага":  "978277453",    # fb5
 }
 # у частини рядків Meta не віддала назву оголошення через права доступу
 BROKEN_AD = "не хватает разрешений"
@@ -577,26 +560,6 @@ def fetch_raw_map(barca_camps=frozenset()):
         print("  сира вкладка %-6s -> %d лідів з ID" % (BARCA_MGR, n))
     except Exception as e:
         print("  сира вкладка НЕ прочиталась:", BARCA_MGR, "->", str(e)[:90])
-    # Мага: її вкладка сама містить ad_id/adset_id (сирий формат лід-форм)
-    try:
-        n = 0
-        for r in fetch_sheet_rows(ss=BARCA_SS, sheet=BARCA_MAGA_SHEET):
-            if str(r.get("created_time") or "")[:10] < BARCA_MAGA_START:
-                continue                         # старий дамп чужих лідів у вкладці
-            ph    = phone9(_barca_phone(r))
-            ad_id = _strip_id_prefix(r.get("ad_id"))
-            as_id = _strip_id_prefix(r.get("adset_id"))
-            if not ph or not ad_id or BROKEN_AD in ad_id or BROKEN_AD in as_id:
-                continue
-            raw_map[ph] = {"m": BARCA_MAGA_MGR, "ad_id": ad_id, "adset_id": as_id,
-                           "ad":    str(r.get("ad_name") or ""),
-                           "adset": str(r.get("adset_name") or "")}
-            n += 1
-        if n:
-            raw_ok.append(BARCA_MAGA_MGR)
-        print("  сира вкладка %-6s -> %d лідів з ID" % (BARCA_MAGA_MGR, n))
-    except Exception as e:
-        print("  сира вкладка НЕ прочиталась:", BARCA_MAGA_MGR, "->", str(e)[:90])
     print("  сирі вкладки працюють для:", ", ".join(raw_ok) if raw_ok else "нікого")
     return raw_map, raw_ok
 
@@ -787,7 +750,7 @@ def _activity_local_dt(ts):
     """event_time з /activities — справжній UTC. Кабінет показує журнал у часовому
     поясі рекламного акаунта (НЕ празькому!) — переводимо туди ж, щоб дата й час на
     дашборді збігалися з журналом Ads Manager. (Зміна Діани «17.07 01:11» у кабінеті
-    прийшла як 2026-07-16T21:11+0000 — різниця рівно зсув пояса кабінету.)
+    прийшла як 2026-07-16T21:11+0000 — кабінет виявився Asia/Dubai, UTC+4.)
     Повертає datetime або None, якщо не розпарсилось."""
     s = str(ts or "")
     try:
@@ -798,14 +761,17 @@ def _activity_local_dt(ts):
         return None
 
 def _budget_amt(v):
-    """Сума з extra_data: центи рядком/числом або вкладений обʼєкт."""
+    """Сума з extra_data: центи числом або вкладений обʼєкт. Реальний формат Meta:
+    {"old_value":{"type":"payment_amount","currency":"USD","old_value":1000,...},
+     "new_value":{...,"new_value":1200,...}} — сума лежить ще раз під тим самим ключем."""
     if isinstance(v, str) and v[:1] in "{[":
         try:
             v = json.loads(v)
         except Exception:
             pass
     if isinstance(v, dict):
-        for k in ("daily_budget", "lifetime_budget", "budget", "value", "amount"):
+        for k in ("daily_budget", "lifetime_budget", "budget",
+                  "new_value", "old_value", "value", "amount"):
             if v.get(k) is not None:
                 v = v[k]
                 break
