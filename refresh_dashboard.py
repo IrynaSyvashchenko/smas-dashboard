@@ -885,6 +885,7 @@ def main():
     out = json.loads(json.dumps(cur))
     out["updated"] = datetime.datetime.now(TZ).replace(microsecond=0).isoformat()
     out["metaSource"] = META_SOURCE["used"]   # graph | windsor — видно в шапці сайту
+    out["periodNote"] = "оновлюється кожні 3 год з 7:00 до 22:00 за Прагою (вночі пауза)"
 
     # Meta-side per manager (bookings carried for now; refined below)
     for m, node in out["managers"].items():
