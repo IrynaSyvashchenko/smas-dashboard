@@ -43,7 +43,10 @@ DATA_FILE = "data.json"
 TZ        = datetime.timezone(datetime.timedelta(hours=2))
 
 LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Alissa",
-           "Саида": "Saida", "Даша": "Dasha", "Юлиана": "Barcelona"}
+           "Саида": "Saida", "Даша": "Dasha",
+           # Мага ПЕРЕД Юліаною: її РК теж барселонська і може містити "Barcelona"
+           "Мага": ("Maga", "Мага"),
+           "Юлиана": "Barcelona"}
 
 # --- Instagram-кампанії: окремі картки на дашборді -------------------------
 # Ліди цих РК ідуть в Instagram Direct — їх немає ні в лід-формах Meta, ні в
@@ -63,6 +66,7 @@ INST_MANUAL = {
 
 # Нові менеджери: вузол у data.json створюється автоматично при першому запуску
 MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "2026-07-09"},
+                     "Мага":   {"city": "Барселона", "start": "2026-07-18"},
                      INST_MGR_PARIS:  {"city": "Париж", "start": "2026-06-20"},
                      INST_MGR_PRAGUE: {"city": "Прага", "start": "2026-06-20"}}
 
@@ -75,6 +79,8 @@ AVG_CHECK = {   # (сума, валюта). Париж/Барселона — ц
     "Диана": (2999, "CZK"), "Даша": (3990, "CZK"),
     "Таня": (199, "EUR"), "Алиса": (159, "EUR"), "Саида": (159, "EUR"),
     "Юлиана": (199, "EUR"),
+    "Мага":   (199, "EUR"),   # припущення = офер Барселони як у Юліани; поправ, якщо інший
+
     INST_MGR_PARIS: (159, "EUR"), INST_MGR_PRAGUE: (3990, "CZK"),
 }
 
@@ -175,7 +181,7 @@ def acct_ok(r):
     return (ACCOUNT in a) if a else True
 
 def rate_metrics(imp, clicks, spend, reach):
-    """CTR/CPM/частота рахуємо із сум — це коректно, на відміну від усереднення Meta."""
+    """CTR/CPM/частоту рахуємо із сум — це коректно, на відміну від усереднення Meta."""
     return {
         "ctr":  round(clicks / imp * 100, 2) if imp else None,
         "cpm":  round(spend / imp * 1000, 2) if imp else None,
@@ -191,8 +197,10 @@ def classify(campaign):
         if "Prague_Diana" in c or "Prague" in c:
             return ("inst", INST_MGR_PRAGUE)
         return ("inst", INST_MGR_PARIS)
+    cl = c.lower()
     for m, kw in LEAD_KW.items():
-        if kw in c:
+        kws = kw if isinstance(kw, tuple) else (kw,)
+        if any(k.lower() in cl for k in kws):
             return ("lead", m)
     return (None, None)
 
@@ -348,6 +356,18 @@ BARCA_RAW_SHEETS = ("фб3", "fb.")    # сирі вкладки з ad_id (лі�
 BARCA_CAMP_KW   = ("yaliana",)
 BARCA_MGR       = "Юлиана"
 
+# Другий барселонський клієнт — Мага (РК «Мага», з 18.07). Її вкладка «Мага Ирина»
+# сама в сирому форматі лід-форм (є ad_id/adset_id) — служить і для записів, і для
+# атрибуції. У вкладці лежить старий дамп червневих лідів чужих кампаній (Віра,
+# «YULIANA», до 01.07) — ріжемо все, що створене до старту РК.
+BARCA_MAGA_SHEET = "Мага Ирина"
+BARCA_MAGA_MGR   = "Мага"
+BARCA_MAGA_START = "2026-07-18"
+
+def _maga_row_ok(r):
+    return (bool(phone9(_barca_phone(r)))
+            and str(r.get("created_time") or "")[:10] >= BARCA_MAGA_START)
+
 def _barca_phone(r):
     # телефон лежить то в número_de_teléfono, то в phone_number — беремо що є
     return r.get("número_de_teléfono") or r.get("phone_number")
@@ -474,6 +494,15 @@ def compute_bookings(barca_camps=frozenset()):
         _print_mgr(BARCA_MGR, res[BARCA_MGR])
     except Exception as e:
         print("  барселона FAIL ->", e)
+
+    # Барселона, Мага: та сама логіка — її вкладка, ліди/записи тільки звідти,
+    # але тільки рядки з дати старту РК (старий дамп у вкладці не її).
+    try:
+        rows = fetch_sheet_rows(ss=BARCA_SS, sheet=BARCA_MAGA_SHEET)
+        res[BARCA_MAGA_MGR] = _tally_manager(rows, today, _barca_phone, _maga_row_ok)
+        _print_mgr(BARCA_MAGA_MGR, res[BARCA_MAGA_MGR])
+    except Exception as e:
+        print("  барселона (Мага) FAIL ->", e)
     return res or None
 
 # ---------------- META: метрики по періодах + свіжі креативи ----------------
@@ -548,6 +577,26 @@ def fetch_raw_map(barca_camps=frozenset()):
         print("  сира вкладка %-6s -> %d лідів з ID" % (BARCA_MGR, n))
     except Exception as e:
         print("  сира вкладка НЕ прочиталась:", BARCA_MGR, "->", str(e)[:90])
+    # Мага: її вкладка сама містить ad_id/adset_id (сирий формат лід-форм)
+    try:
+        n = 0
+        for r in fetch_sheet_rows(ss=BARCA_SS, sheet=BARCA_MAGA_SHEET):
+            if str(r.get("created_time") or "")[:10] < BARCA_MAGA_START:
+                continue                         # старий дамп чужих лідів у вкладці
+            ph    = phone9(_barca_phone(r))
+            ad_id = _strip_id_prefix(r.get("ad_id"))
+            as_id = _strip_id_prefix(r.get("adset_id"))
+            if not ph or not ad_id or BROKEN_AD in ad_id or BROKEN_AD in as_id:
+                continue
+            raw_map[ph] = {"m": BARCA_MAGA_MGR, "ad_id": ad_id, "adset_id": as_id,
+                           "ad":    str(r.get("ad_name") or ""),
+                           "adset": str(r.get("adset_name") or "")}
+            n += 1
+        if n:
+            raw_ok.append(BARCA_MAGA_MGR)
+        print("  сира вкладка %-6s -> %d лідів з ID" % (BARCA_MAGA_MGR, n))
+    except Exception as e:
+        print("  сира вкладка НЕ прочиталась:", BARCA_MAGA_MGR, "->", str(e)[:90])
     print("  сирі вкладки працюють для:", ", ".join(raw_ok) if raw_ok else "нікого")
     return raw_map, raw_ok
 
