@@ -232,16 +232,16 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       }
     }
     // CPA по ад-сетах: рахуємо ЗАВЖДИ за 7 днів (запис доганяє лід за 1–5 днів, «вчора» шумить).
-    // Пороги від чека міста: ≥25% чека або ≥$25 без записів — критично, ≥15% — попередження.
-    for(const a of (AS.d7||[])){
-      if(isInst(a.m)||deadAdsets.has(a.adset)) continue;
+    // Пороги від чека міста: ≥25% чека або ≥$25 без записів — критично, ≥15% — попередження. Нові РК (<4 днів від старту) не судимо — записи ще доганяють ліди; для 4–6 днів пишемо фактичний період.
+    const dlv=m=>{const s=M[m]?.start;return s?Math.floor((new Date(today)-new Date(s))/864e5)+1:99;}; for(const a of (AS.d7||[])){
+      if(isInst(a.m)||deadAdsets.has(a.adset)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
       const chk=M[a.m]?.check?.usd;
       if(a.spend>=25&&a.book===0)
-        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> за 7 днів і <b>0 записів</b> — ліди не конвертяться.`]);
+        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> за ${per} і <b>0 записів</b> — ліди не конвертяться.`]);
       else if(chk&&a.cpa!=null&&a.cpa>=chk*0.25)
-        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (7 днів) — це ≥25% чека ${fmt(chk,0)}.`]);
+        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — це ≥25% чека ${fmt(chk,0)}.`]);
       else if(chk&&a.cpa!=null&&a.cpa>=chk*0.15)
-        A.push(['warn',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (7 днів) — дорожче за 15% чека ${fmt(chk,0)}.`]);
+        A.push(['warn',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — дорожче за 15% чека ${fmt(chk,0)}.`]);
     }
     for(const c of (CR[k]||[])){
       if(deadAdsets.has(c.adset)) continue;   // алерт по цілому ад-сету вже є
