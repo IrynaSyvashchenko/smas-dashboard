@@ -904,8 +904,8 @@ def main():
         node.pop("instSpend", None)   # інста тепер окремі картки, а не рядок у Діани/Аліси
         node["check"] = check_usd_node(m)   # середній чек для ROAS (None = не показуємо)
         if m in (INST_MGR_PARIS, INST_MGR_PRAGUE):
-            # інста-картка «вимкнена», якщо нема витрат вчора/сьогодні — сайт сірить і ставить у кінець
-            node["act"] = bool(sum(spend[-2:]) > 0)
+            # Инста Париж вимкнена вручну (Ірина, 19.07); решта — авто по витратах вчора/сьогодні
+            node["act"] = (m != INST_MGR_PARIS) and bool(sum(spend[-2:]) > 0)
 
     # Bookings from the sheet (defensive: keep carried values on any problem)
     try:
