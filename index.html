@@ -271,9 +271,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     el.innerHTML='';
     let tSp=0,tLd=0,tBk=0,tRev=0,tRevSp=0;
     const cards=[];
-    // картки просто ВПОРЯДКОВАНІ по містах: Прага -> Париж -> Барселона (без роздільників)
+    // картки ВПОРЯДКОВАНІ по містах: Прага -> Париж -> Барселона; вимкнені (act===false) — в кінець
     const ordered=Object.keys(M).sort((a,b)=>{
-      const ia=CITY_ORDER.indexOf(M[a].city), ib=CITY_ORDER.indexOf(M[b].city);
+      const xa=M[a].act===false?1:0, xb=M[b].act===false?1:0; if(xa!==xb) return xa-xb; const ia=CITY_ORDER.indexOf(M[a].city), ib=CITY_ORDER.indexOf(M[b].city);
       return ((ia<0?99:ia)-(ib<0?99:ib))||a.localeCompare(b);
     });
     for(const name of ordered){ const m=M[name];
@@ -285,8 +285,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       if(m.check&&sp){ tRev+=bk*m.check.usd; tRevSp+=sp; }
       const cpl=ld?sp/ld:null, cpa=bk?sp/bk:null, conv=ld?Math.round(bk/ld*1000)/10+'%':'—';
       const cCol=cpaColor(m.city,cpa);
-      cards.push(`<div class="card">
-        <h3>${name} <span class="city">${m.city}</span></h3>
+      const off=m.act===false; cards.push(`<div class="card"${off?' style="opacity:.55"':''}>
+        <h3>${name} <span class="city">${m.city}</span>${off?' <span class="tag" style="background:var(--card2);color:var(--mut);border:1px solid var(--border)">вимкнена</span>':''}</h3>
         <div class="bigrow">
           <div><div class="big">${fmt(cpl)}</div><div class="lbl">CPL · лід</div></div>
           <div><div class="big"${cCol?` style="color:${cCol}"`:''}>${fmt(cpa)}</div><div class="lbl">CPA · запис</div></div>
