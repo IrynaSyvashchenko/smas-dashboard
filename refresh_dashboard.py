@@ -641,9 +641,9 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
 
 def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
     """Креативи ПО КОЖНОМУ ПЕРІОДУ. Показуємо ВСІ, що мали витрати в періоді;
-    прапорець "act" = чи крутиться зараз (витрати вчора/сьогодні) — сайт
+    прапорець "act" = чи крутиться зараз (effective_status ACTIVE з кабінету) — сайт
     показує неактивні сірим. Повертає {period_key: [рядки]}."""
-    active = _active_ids("ad_id", yest_s)
+    active = _active_ids("ad_id", yest_s); live = ({str(x.get("id")) for x in _graph_all("ads", "id,effective_status") if x.get("effective_status") == "ACTIVE"} if META_TOKEN else None)
     out = {}
     for key, (dfrom, dto) in periods.items():
         try:
@@ -684,7 +684,7 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
             rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
             book = bmap.get(aid, 0) if (m in raw_ok and bk and m in bk) else None
             res.append({"m": m, "name": a["ad"], "adset": a["adset"], "campaign": a["campaign"],
-                        "act": aid in active,
+                        "act": (aid in live) if live is not None else (aid in active),
                         "spend": sp, "leads": ld,
                         "cpl":  round(sp / ld, 2) if ld else None,
                         "book": book,
