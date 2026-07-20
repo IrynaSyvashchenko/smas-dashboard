@@ -103,7 +103,7 @@ tr:hover td{background:var(--card2)}
 <h2>🚀 Масштабування</h2>
 <div class="phint">Безпечне правило: піднімати бюджет на <b>20–30%</b> і не частіше, ніж <b>раз на 2–3 дні</b> — різкіший або частіший стрибок скидає навчання ад-сета (Meta: не редагуй, поки ад-сет «навчається»). Рекомендація враховує CPA за 7 днів, частоту і дату останньої зміни бюджету з журналу кабінету.</div>
 <div style="overflow-x:auto"><table id="scTable">
-<thead><tr><th>Ад-сет · кампанія</th><th>Бюджет/день</th><th>Остання зміна бюджету</th><th>CPA · 7 днів</th><th>CPA · місяць</th><th>Рекомендація</th></tr></thead>
+<thead><tr><th>Ад-сет · кампанія</th><th>Бюджет/день</th><th>Остання зміна бюджету</th><th>CPL · 7 днів</th><th>CPL · місяць</th><th>CPA · 7 днів</th><th>CPA · місяць</th><th>Рекомендація</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="scNote"></div>
 </div>
@@ -448,7 +448,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const moMap=new Map((AS.month||[]).map(a=>[a.m+'|'+(a.campaign||'')+'|'+a.adset,a]));
     const rows=[];
     for(const s of sc){
-      const a=d7map.get(s.m+'|'+(s.campaign||'')+'|'+s.adset);
+      const a=d7map.get(s.m+'|'+(s.campaign||'')+'|'+s.adset), moA=moMap.get(s.m+'|'+(s.campaign||'')+'|'+s.adset);
       const chk=M[s.m]?.check?.usd;
       const cpa=a?.cpa, freq=a?.freq, book=a?.book, spend=a?.spend||0;
       const since=s.chg?.date||s.created;                       // без змін бюджету = від створення
@@ -465,7 +465,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         {rec='0 записів за 7 днів — не масштабуй';cls='r';}
       else if(chk&&cpa!=null&&cpa>=chk*0.15)
         {rec=`запис ${fmt(cpa)} — спершу здешевити, не масштабуй`;cls='r';}
-      else if(cpa!=null&&(book||0)>=2)
+      else if(a?.cpl!=null&&moA?.cpl!=null&&a.cpl>=moA.cpl*1.3) {rec=`ціна ліда виросла: ${fmt(a.cpl)} (7 днів) проти ${fmt(moA.cpl)} (місяць) — спершу онови креатив/аудиторію`;cls='y';} else if(cpa!=null&&(book||0)>=2)
         {rec=s.budget?`можна +20–30%: ${fmt(s.budget)} → ${fmt(s.budget*1.25)}–${fmt(s.budget*1.3)}/день`:'можна +20–30%';cls='g';}
       else
         {rec='мало записів для висновку — не чіпай';cls='y';}
@@ -476,17 +476,17 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     scb.innerHTML='';
     for(const r of rows){
       const s=r.s;
-      const mo=moMap.get(s.m+'|'+(s.campaign||'')+'|'+s.adset);
+      const mo=moMap.get(s.m+'|'+(s.campaign||'')+'|'+s.adset); const city=M[s.m]?.city, cc7=cpaColor(city,r.a?.cpa), ccM=cpaColor(city,mo?.cpa), grow=r.a?.cpl!=null&&mo?.cpl!=null&&r.a.cpl>=mo.cpl*1.3;
       const chg=s.chg?`${dd(s.chg.date)}${s.chg.time?` о ${s.chg.time}`:''}${s.chg.from!=null&&s.chg.to!=null?` · ${fmt(s.chg.from)} → ${fmt(s.chg.to)}`:''}`:(s.created?`не мінявся (з ${dd(s.created)})`:'—');
       scb.insertAdjacentHTML('beforeend',`<tr>
         <td>${s.adset}<br><span style="color:var(--mut);font-size:.72rem">${s.m} · ${s.campaign||''}</span></td>
         <td><b>${fmt(s.budget)}</b>${s.lvl==='campaign'?' <span class="tag y">CBO</span>':''}</td>
         <td>${chg}</td>
-        <td>${r.a?fmt(r.a.cpa):'—'}</td>
-        <td>${mo?fmt(mo.cpa):'—'}</td>
+        <td${grow?' style="color:var(--warn)"':''}>${r.a?.cpl!=null?fmt(r.a.cpl):'—'}</td><td>${mo?.cpl!=null?fmt(mo.cpl):'—'}</td><td${cc7?` style="color:${cc7}"`:''}>${r.a?.cpa!=null?fmt(r.a.cpa):'—'}</td>
+        <td${ccM?` style="color:${ccM}"`:''}>${mo?.cpa!=null?fmt(mo.cpa):'—'}</td>
         <td><span class="tag ${r.cls}">${r.rec}</span></td></tr>`);
     }
-    document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta (дата й час — як у журналі Ads Manager: часовий пояс кабінету, він дубайський, +2 год до Праги). ВАЖЛИВО: неопубліковані чернетки з Ads Manager тут НЕ видно — поки правка не опублікована, реклама крутиться на старому бюджеті. CBO = бюджет на рівні кампанії. «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥2 повні дні. Офіційне правило Meta — без редагувань, поки ад-сет «навчається» (~50 результатів після суттєвої зміни), тож для повільних ад-сетів (мало лідів) краще чекати довше.`;
+    document.getElementById('scNote').textContent=`Бюджет і журнал змін — з Meta (дата й час — як у журналі Ads Manager: часовий пояс кабінету, він дубайський, +2 год до Праги). ВАЖЛИВО: неопубліковані чернетки з Ads Manager тут НЕ видно — поки правка не опублікована, реклама крутиться на старому бюджеті. CBO = бюджет на рівні кампанії. Ціна запису (CPA) підсвічена порогами міста, як на картках; жовта ціна ліда за 7 днів = виросла ≥30% проти місячної — тоді краще оновити креатив, а не піднімати бюджет. «Можна +20–30%» зʼявляється, коли: CPA за 7 днів здоровий (<15% чека), є ≥2 записи, частота <2.2 і від останньої зміни бюджету минуло ≥2 повні дні. Офіційне правило Meta — без редагувань, поки ад-сет «навчається» (~50 результатів після суттєвої зміни), тож для повільних ад-сетів (мало лідів) краще чекати довше.`;
   }
 
   render('yest');
