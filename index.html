@@ -471,11 +471,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         {rec='мало записів для висновку — не чіпай';cls='y';}
       rows.push({s,a,rec,cls});
     }
-    rows.sort((x,y)=>('gyr'.indexOf(x.cls)-'gyr'.indexOf(y.cls))||((y.s.budget||0)-(x.s.budget||0)));
+    rows.sort((x,y)=>{const ca=CITY_ORDER.indexOf(M[x.s.m]?.city), cb=CITY_ORDER.indexOf(M[y.s.m]?.city); return ((ca<0?99:ca)-(cb<0?99:cb))||x.s.m.localeCompare(y.s.m)||((y.s.budget||0)-(x.s.budget||0));}); let scCity=null;
     const scb=document.querySelector('#scTable tbody');
     scb.innerHTML='';
     for(const r of rows){
-      const s=r.s;
+      const s=r.s; const rCity=M[s.m]?.city||'—'; if(rCity!==scCity){scCity=rCity; scb.insertAdjacentHTML('beforeend',cityRow(rCity,8));}
       const mo=moMap.get(s.m+'|'+(s.campaign||'')+'|'+s.adset); const city=M[s.m]?.city, cc7=cpaColor(city,r.a?.cpa), ccM=cpaColor(city,mo?.cpa), grow=r.a?.cpl!=null&&mo?.cpl!=null&&r.a.cpl>=mo.cpl*1.3;
       const chg=s.chg?`${dd(s.chg.date)}${s.chg.time?` о ${s.chg.time}`:''}${s.chg.from!=null&&s.chg.to!=null?` · ${fmt(s.chg.from)} → ${fmt(s.chg.to)}`:''}`:(s.created?`не мінявся (з ${dd(s.created)})`:'—');
       scb.insertAdjacentHTML('beforeend',`<tr>
