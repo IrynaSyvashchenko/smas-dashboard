@@ -581,7 +581,7 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
     реакції / записи). Повертає {period_key: [рядки]}. Період, який не вдалось
     отримати, просто відсутній у результаті — main() лишить для нього старі дані.
     Саме тут видно проблеми таргетингу (гео, радіус), яких не видно на рівні креативу."""
-    active = _active_ids("adset_id", yest_s)
+    active = _active_ids("adset_id", yest_s); liveA = ({str(x.get("id")) for x in _graph_all("adsets", "id,effective_status") if x.get("effective_status") == "ACTIVE"} if META_TOKEN else None)
     out = {}
     for key, (dfrom, dto) in periods.items():
         try:
@@ -595,7 +595,7 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
             kind, m = classify(r.get("campaign"))
             if m is None: continue          # inst-ад-сети показуємо (витрати/CTR з Meta)
             aid = str(r.get("adset_id") or "")
-            if not aid or aid not in active: continue
+            if not aid or aid not in active or (liveA is not None and aid not in liveA): continue
             a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
                                      "adset": r.get("adset_name"),
                                      "spend": 0.0, "leads": 0,
@@ -643,7 +643,7 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
     """Креативи ПО КОЖНОМУ ПЕРІОДУ. Показуємо ВСІ, що мали витрати в періоді;
     прапорець "act" = чи крутиться зараз (effective_status ACTIVE з кабінету) — сайт
     показує неактивні сірим. Повертає {period_key: [рядки]}."""
-    active = _active_ids("ad_id", yest_s); live = ({str(x.get("id")) for x in _graph_all("ads", "id,effective_status") if x.get("effective_status") == "ACTIVE"} if META_TOKEN else None)
+    active = _active_ids("ad_id", yest_s); live = ({str(x.get("id")) for x in _graph_all("ads", "id,effective_status") if x.get("effective_status") == "ACTIVE"} if META_TOKEN else None); liveA = ({str(x.get("id")) for x in _graph_all("adsets", "id,effective_status") if x.get("effective_status") == "ACTIVE"} if META_TOKEN else None)
     out = {}
     for key, (dfrom, dto) in periods.items():
         try:
@@ -657,7 +657,7 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
             kind, m = classify(r.get("campaign"))
             if m is None: continue          # inst-креативи показуємо (витрати/CTR з Meta)
             aid = str(r.get("ad_id") or "")
-            if not aid: continue
+            if not aid or (liveA is not None and str(r.get("adset_id") or "") and str(r.get("adset_id") or "") not in liveA): continue
             a = agg.setdefault(aid, {"m": m, "campaign": r.get("campaign"),
                                      "adset": r.get("adset_name"), "ad": r.get("ad_name"),
                                      "spend": 0.0, "leads": 0,
