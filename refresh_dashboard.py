@@ -38,7 +38,7 @@ META_TOKEN = _clean_secret("META_TOKEN")
 GRAPH_API  = "https://graph.facebook.com/v21.0"
 ACCOUNT   = "873265084670144"
 DATE_FROM = "2026-06-20"
-TODAY     = datetime.date.today().isoformat()
+TODAY     = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=2))).date().isoformat()  # празька дата, щоб «Сьогодні» збігалося з «Оновлено» навіть уночі
 DATA_FILE = "data.json"
 TZ        = datetime.timezone(datetime.timedelta(hours=2))
 
