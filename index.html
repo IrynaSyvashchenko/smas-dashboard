@@ -225,7 +225,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const A=[];
     const deadAdsets=new Set();
     for(const a of (AS[k]||[])){
-      if(isInst(a.m)) continue;   // ліди інсти йдуть у Direct — «0 лідів» тут не помилка
+      if(isInst(a.m)||a.act===false) continue;   // інста -> ліди в Direct; вимкнений -> дій не потребує
       if(a.spend>=5&&a.leads===0){
         deadAdsets.add(a.adset);
         A.push(['bad',`💸 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> витрачено, <b>0 лідів</b> — перевір або вимкни.`]);
@@ -234,7 +234,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     // CPA по ад-сетах: рахуємо ЗАВЖДИ за 7 днів (запис доганяє лід за 1–5 днів, «вчора» шумить).
     // Пороги від чека міста: ≥25% чека або ≥$25 без записів — критично, ≥15% — попередження. Нові РК (<4 днів від старту) не судимо — записи ще доганяють ліди; для 4–6 днів пишемо фактичний період.
     const dlv=m=>{const s=M[m]?.start;return s?Math.floor((new Date(today)-new Date(s))/864e5)+1:99;}; for(const a of (AS.d7||[])){
-      if(isInst(a.m)||deadAdsets.has(a.adset)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
+      if(isInst(a.m)||a.act===false||deadAdsets.has(a.adset)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
       const chk=M[a.m]?.check?.usd;
       if(a.spend>=25&&a.book===0)
         A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> за ${per} і <b>0 записів</b> — ліди не конвертяться.`]);
@@ -349,14 +349,14 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       const ct=M[mgr]?.city||'';
       if(ct&&ct!==asCity){asb.insertAdjacentHTML('beforeend',cityRow(ct,10));asCity=ct;}
       asb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,10));
-      for(const a of [...rows].sort((x,y)=>(y.spend||0)-(x.spend||0))){
-        const ii=isInst(a.m);   // ліди інсти в Direct: замість нулів чесне «—»
+      for(const a of [...rows].sort((x,y)=>((x.act===false)-(y.act===false))||(y.spend||0)-(x.spend||0))){
+        const ii=isInst(a.m), ia=(a.act===false);   // ia = ад-сет уже не крутиться -> сірий рядок
         const q=a.q, fcls=a.freq==null?'':(a.freq>=2.5?'r':a.freq>=1.8?'y':'g');
         const bR=q?pct(q.bad,q.leads):null, nR=q?pct(q.noresp,q.leads):null;
         const bcls=bR==null?'':(bR>=20?'r':bR>=10?'y':'g');
         const ncls=nR==null?'':(nR>=40?'r':nR>=25?'y':'g');
-        asb.insertAdjacentHTML('beforeend',`<tr>
-          <td>${a.adset}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
+        asb.insertAdjacentHTML('beforeend',`<tr${ia?' class="inact"':''}>
+          <td>${a.adset}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
           <td>${fmt(a.spend)}</td><td>${ii?'—':a.leads}</td><td>${ii?'—':fmt(a.cpl)}</td>
           <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
           <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
@@ -372,7 +372,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     if(list.some(a=>isInst(a.m))) notes.push('Инста-кампанії: ліди йдуть у Direct, тому тут лише витрати/CTR/частота (ліди й записи — на картці «Инста…»). ');
     const asMiss=[...new Set(list.filter(a=>!a.q&&!isInst(a.m)).map(a=>a.m))];
     if(asMiss.length) notes.push(`* Якість і записи по ад-сетах поки недоступні для: ${asMiss.join(', ')} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
-    notes.push('Показані тільки активні ад-сети (витрати вчора/сьогодні).');
+    if(list.some(a=>a.act===false)) notes.push('Сірі рядки з позначкою «вимкнений» — ад-сети, які вже не крутяться: показані для порівняння, в кінці. ');
     document.getElementById('asNote').textContent=notes.join('');
   }
 
