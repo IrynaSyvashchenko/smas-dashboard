@@ -77,14 +77,14 @@ def build(d):
 
     al, dead = [], set()
     for a in (d.get("adsets", {}).get("yest") or []):
-        if str(a["m"]).startswith("Инста"):
+        if str(a["m"]).startswith("Инста") or a.get("act") is False:
             continue
         if (a.get("spend") or 0) >= 5 and (a.get("leads") or 0) == 0:
             dead.add(a["adset"])
             al.append("• %s (%s): $%.2f без лідів — глянь або вимкни" % (a["adset"], a["m"], a["spend"]))
     for a in (d.get("adsets", {}).get("d7") or []):
         m = a["m"]
-        if str(m).startswith("Инста") or a["adset"] in dead:
+        if str(m).startswith("Инста") or a.get("act") is False or a["adset"] in dead:
             continue
         dl = days_live(m)
         if dl < 4:
