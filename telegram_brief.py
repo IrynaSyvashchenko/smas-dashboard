@@ -55,7 +55,16 @@ def build(d):
         except ValueError:
             continue
         sp = n["spend"][i]; ld = n["leads"][i]
-        bk = (n.get("bookings1d") if use1d else n.get("bookingsYest")) or 0
+        # записи = ті самі, що зверху на дашборді:
+        #   увечері (звітний = сьогодні) -> bookingsToday (нові позначки запису за сьогодні);
+        #   вранішнє надолуження (звітний = вчора) -> bookingsYest.
+        if use1d:
+            bk = n.get("bookingsToday")
+            if bk is None:
+                bk = (n.get("bookings1d") or 0) + (n.get("bookingsOld1d") or 0)
+        else:
+            bk = n.get("bookingsYest")
+        bk = bk or 0
         if sp <= 0 and ld <= 0:
             continue
         tsp += sp; tld += ld; tbk += bk
@@ -63,8 +72,9 @@ def build(d):
     rows.sort(key=lambda r: -r[1])
 
     cpa = ("$%.2f" % (tsp / tbk)) if tbk else "—"
-    L = ["☀️ SMAS за вчора (%s)" % rday.strftime("%d.%m"),
-         "Разом: $%.0f · %d лідів · %d записів · CPA %s" % (tsp, tld, tbk, cpa), ""]
+    hdr = "сьогодні" if use1d else "вчора"
+    L = ["☀️ SMAS за %s (%s)" % (hdr, rday.strftime("%d.%m")),
+         "Разом: $%.0f · %d лідів · %d записів (нові позначки за день) · CPA %s" % (tsp, tld, tbk, cpa), ""]
     for m, sp, ld, bk in rows:
         L.append("%s: $%.0f · %d л · %d з" % (m, sp, ld, bk))
 
