@@ -82,8 +82,6 @@ tr:hover td{background:var(--card2)}
 <div class="chartbox"><h3>Ціна ліда (CPL) по днях, $</h3><canvas id="cplChart"></canvas></div>
 <div class="chartbox"><h3>Ліди по днях</h3><canvas id="leadsChart"></canvas></div>
 <div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
-<div class="chartbox"><h3>Ціна запису (CPA) по періодах, $ — по менеджерах</h3><canvas id="cpaPerChart"></canvas><div class="phint" style="margin:8px 0 0">CPA = витрати періоду / записи періоду (рівень менеджера, як на картці). «Вчора» шумить — мало записів за день; орієнтуйся на 7 днів / місяць.</div></div>
-<div class="chartbox"><h3>Записи по періодах — по менеджерах</h3><canvas id="bkPerChart"></canvas></div>
 <div id="dayCharts">
 <div class="chartbox"><h3>Ціна запису (CPA) по днях, $</h3><canvas id="cpaDayChart"></canvas><div class="phint" style="margin:8px 0 0">CPA за день = витрати дня / записи серед лідів, створених того дня. За день записів мало → лінія стрибуча з пропусками, це нормально.</div></div>
 <div class="chartbox"><h3>Записи по днях (за датою ліда)</h3><canvas id="bkDayChart"></canvas></div>
@@ -511,18 +509,6 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   new Chart(cplChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('cpl')},options:{interaction:{mode:'index',intersect:false}}});
   new Chart(leadsChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('leads')},options:{interaction:{mode:'index',intersect:false}}});
   new Chart(spendChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
-
-  // ---- CPA і записи по періодах: групи по менеджеру, 4 бари (Вчора/7днів/місяць/весь час) ----
-  const PORD=[['yest','Вчора'],['d7','7 днів'],['month',monthName],['all','Весь час']];
-  const PCOL={yest:'#4f8cff',d7:'#3ecf8e',month:'#f5b942',all:'#b47fff'};
-  const perM=Object.keys(M).filter(n=>!isInst(n)&&M[n].act!==false)
-    .sort((a,b)=>{const ia=CITY_ORDER.indexOf(M[a].city),ib=CITY_ORDER.indexOf(M[b].city);return((ia<0?99:ia)-(ib<0?99:ib))||a.localeCompare(b);});
-  const spP=(m,pk)=>{let s=0;m.dates.forEach((d,i)=>{if(P[pk].pred(d))s+=m.spend[i]||0;});return s;};
-  const bkP=(m,pk)=>P[pk].bk(m)||0;
-  const cpaDs=PORD.map(([pk,lbl])=>({label:lbl,data:perM.map(n=>{const b=bkP(M[n],pk);return b?Math.round(spP(M[n],pk)/b*100)/100:null;}),backgroundColor:PCOL[pk]}));
-  const bkDs=PORD.map(([pk,lbl])=>({label:lbl,data:perM.map(n=>bkP(M[n],pk)),backgroundColor:PCOL[pk]}));
-  new Chart(cpaPerChart,{type:'bar',data:{labels:perM,datasets:cpaDs},options:{interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top'}},scales:{y:{beginAtZero:true,title:{display:true,text:'$ / запис'}}}}});
-  new Chart(bkPerChart,{type:'bar',data:{labels:perM,datasets:bkDs},options:{interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top'}},scales:{y:{beginAtZero:true}}}});
 
   // ---- CPA і записи ПО ДНЯХ (лінії, як CPL). Потребує bookingsDay з пайплайну ----
   const hasBD=Object.values(M).some(m=>Array.isArray(m.bookingsDay));
