@@ -1018,11 +1018,20 @@ def main():
             booked = [L for L in v.get("leadsQ", []) if L.get("bk")]
             in_raw  = sum(1 for L in booked if raw_map.get(L["ph"]))
             with_as = sum(1 for L in booked if (raw_map.get(L["ph"]) or {}).get("adset_id"))
-            diag[mgr] = {"booked": len(booked), "phone_in_raw": in_raw,
-                         "with_adset_id": with_as,
-                         "raw_rows": sum(1 for h in raw_map.values() if h.get("m") == mgr)}
-            print("  атрибуція %-6s: записів %d | телефон у сирій %d | з adset_id %d | сирих рядків %d"
-                  % (mgr, len(booked), in_raw, with_as, diag[mgr]["raw_rows"]))
+            # d7-зріз ТОЧНО як у build_adsets: period + adset_id + hit["m"]==mgr.
+            # Порівняння d7_with_adset vs d7_adset_same_m покаже, чи винна вимога збігу менеджера;
+            # d7_booked vs d7_in_raw покаже, чи сира вкладка відстає по свіжих лідах.
+            b7 = [L for L in booked if L.get("cd") and L["cd"] >= d7from]
+            b7_in  = sum(1 for L in b7 if raw_map.get(L["ph"]))
+            b7_as  = sum(1 for L in b7 if (raw_map.get(L["ph"]) or {}).get("adset_id"))
+            b7_asm = sum(1 for L in b7 if (raw_map.get(L["ph"]) or {}).get("adset_id")
+                         and (raw_map.get(L["ph"]) or {}).get("m") == mgr)
+            diag[mgr] = {"booked": len(booked), "phone_in_raw": in_raw, "with_adset_id": with_as,
+                         "raw_rows": sum(1 for h in raw_map.values() if h.get("m") == mgr),
+                         "d7_booked": len(b7), "d7_in_raw": b7_in,
+                         "d7_with_adset": b7_as, "d7_adset_same_m": b7_asm}
+            print("  атрибуція %-6s: d7 booked %d | in_raw %d | adset %d | adset&same_m %d"
+                  % (mgr, len(b7), b7_in, b7_as, b7_asm))
         out["_diag"] = {"raw_ok": raw_ok, "attribution": diag}
 
     def _merge_periods(field, fresh):
