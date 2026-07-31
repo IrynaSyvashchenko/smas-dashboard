@@ -94,27 +94,22 @@ def build(d):
         if (a.get("spend") or 0) >= 5 and (a.get("leads") or 0) == 0:
             dead.add(a["adset"])
             al.append("• %s (%s): $%.2f без лідів — глянь або вимкни" % (a["adset"], a["m"], a["spend"]))
-    # CPA рахуємо на рівні МЕНЕДЖЕРА за 7 днів (як на картці), а не по ад-сетах:
-    # записи не завжди прив'язуються до конкретного ад-сета -> адсет-CPA буває завищена.
-    d7from = (today - datetime.timedelta(days=6)).isoformat()
-    for name, n in M.items():
-        if str(name).startswith("Инста") or n.get("act") is False:
+    # CPA по АД-СЕТАХ за 7 днів (прив'язку записів до ад-сета полагоджено — див. refresh_dashboard).
+    for a in (d.get("adsets", {}).get("d7") or []):
+        m = a["m"]
+        if str(m).startswith("Инста") or a.get("act") is False or a["adset"] in dead:
             continue
-        dl = days_live(name)
+        dl = days_live(m)
         if dl < 4:
             continue
         per = ("%d дн." % dl) if dl < 7 else "7 днів"
-        sp7 = round(sum(n["spend"][i] for i, dd in enumerate(n["dates"]) if dd >= d7from), 2)
-        bk7 = n.get("bookings7d") or 0
-        ck = chk(name)
-        if sp7 >= 50 and bk7 == 0:
-            al.append("• %s: $%.0f за %s і 0 записів" % (name, sp7, per))
-        elif bk7 and ck:
-            cp = sp7 / bk7
-            if cp >= ck * 0.25:
-                al.append("• %s: запис $%.2f (%s) — дуже дорого (≥25%% чека)" % (name, cp, per))
-            elif cp >= ck * 0.15:
-                al.append("• %s: запис $%.2f (%s) — дорожче 15%% чека" % (name, cp, per))
+        ck, cp = chk(m), a.get("cpa")
+        if (a.get("spend") or 0) >= 25 and (a.get("book") or 0) == 0:
+            al.append("• %s (%s): $%.0f за %s і 0 записів" % (a["adset"], m, a["spend"], per))
+        elif ck and cp is not None and cp >= ck * 0.25:
+            al.append("• %s (%s): запис $%.2f (%s) — дуже дорого" % (a["adset"], m, cp, per))
+        elif ck and cp is not None and cp >= ck * 0.15:
+            al.append("• %s (%s): запис $%.2f (%s) — дорожче 15%% чека" % (a["adset"], m, cp, per))
     for c in (d.get("creatives", {}).get("yest") or []):
         if c.get("act") is False or c.get("adset") in dead:
             continue
