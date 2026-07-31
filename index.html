@@ -237,24 +237,20 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         A.push(['bad',`💸 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> витрачено, <b>0 лідів</b> — перевір або вимкни.`]);
       }
     }
-    // CPA (ціна запису) — рахуємо на рівні МЕНЕДЖЕРА за 7 днів, а НЕ по ад-сетах.
-    // Чому: записи не завжди прив'язуються до конкретного ад-сета (частина лідів не має
-    // adset_id у сирих даних), тому адсет-CPA буває завищена в рази. Менеджерське число
-    // збігається з карткою. Пороги від чека міста: ≥25% — критично, ≥15% — попередження;
-    // ≥$50 без жодного запису — критично. Нові РК (<4 днів) не судимо.
+    // CPA (ціна запису) по АД-СЕТАХ за 7 днів. Прив'язку записів до ад-сета полагоджено
+    // (raw_map: phone->adset_id, без вимоги збігу менеджера — паризькі сирі вкладки перехресні),
+    // тому адсет-CPA тепер надійна. Пороги від чека міста: ≥25% або ≥$25 без записів — критично,
+    // ≥15% — попередження. Нові РК (<4 днів від старту) не судимо — записи ще доганяють ліди.
     const dlv=m=>{const s=M[m]?.start;return s?Math.floor((new Date(today)-new Date(s))/864e5)+1:99;};
-    for(const [name,m] of Object.entries(M)){
-      if(isInst(name)||m.act===false) continue; const dl=dlv(name); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
-      let sp7=0; m.dates.forEach((d,i)=>{ if(d>=d7from) sp7+=m.spend[i]||0; }); sp7=Math.round(sp7*100)/100;
-      const bk7=m.bookings7d||0, chk=m.check?.usd;
-      if(sp7>=50&&bk7===0)
-        A.push(['bad',`💰 <b>${name}</b>: <b>${fmt(sp7)}</b> за ${per} і <b>0 записів</b> — ліди не конвертяться.`]);
-      else if(bk7>0&&chk){ const cpa=sp7/bk7;
-        if(cpa>=chk*0.25)
-          A.push(['bad',`💰 <b>${name}</b>: запис коштує <b>${fmt(cpa)}</b> (${per}) — це ≥25% чека ${fmt(chk,0)}.`]);
-        else if(cpa>=chk*0.15)
-          A.push(['warn',`💰 <b>${name}</b>: запис коштує <b>${fmt(cpa)}</b> (${per}) — дорожче за 15% чека ${fmt(chk,0)}.`]);
-      }
+    for(const a of (AS.d7||[])){
+      if(isInst(a.m)||a.act===false||deadAdsets.has(a.adset)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
+      const chk=M[a.m]?.check?.usd;
+      if(a.spend>=25&&a.book===0)
+        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> за ${per} і <b>0 записів</b> — ліди не конвертяться.`]);
+      else if(chk&&a.cpa!=null&&a.cpa>=chk*0.25)
+        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — це ≥25% чека ${fmt(chk,0)}.`]);
+      else if(chk&&a.cpa!=null&&a.cpa>=chk*0.15)
+        A.push(['warn',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — дорожче за 15% чека ${fmt(chk,0)}.`]);
     }
     for(const c of (CR[k]||[])){
       if(deadAdsets.has(c.adset)) continue;   // алерт по цілому ад-сету вже є
@@ -385,7 +381,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     if(list.some(a=>isInst(a.m))) notes.push('Инста-кампанії: ліди йдуть у Direct, тому тут лише витрати/CTR/частота (ліди й записи — на картці «Инста…»). ');
     const asMiss=[...new Set(list.filter(a=>!a.q&&!isInst(a.m)).map(a=>a.m))];
     if(asMiss.length) notes.push(`* Якість і записи по ад-сетах поки недоступні для: ${asMiss.join(', ')} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
-    if(list.some(a=>!isInst(a.m))) notes.push('⚠️ «Записи» і «CPA» по ад-сету можуть бути занижені/завищені: не всі записи прив\'язуються до конкретного ад-сета (у частини лідів нема adset_id). Надійна ціна запису — на картці менеджера і в алертах. ');
+    if(list.some(a=>!isInst(a.m))) notes.push('Записи прив\'язуються до ад-сета по adset_id ліда (не по назві). Свіжі записи можуть доганяти з лагом 1–5 днів, тому за останні дні CPA ще може трохи мінятись. ');
     if(list.some(a=>a.act===false)) notes.push('Сірі рядки з позначкою «вимкнений» — ад-сети, які вже не крутяться: показані для порівняння, в кінці. ');
     document.getElementById('asNote').textContent=notes.join('');
   }
