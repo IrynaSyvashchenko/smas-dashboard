@@ -84,6 +84,10 @@ tr:hover td{background:var(--card2)}
 <div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
 <div class="chartbox"><h3>Ціна запису (CPA) по періодах, $ — по менеджерах</h3><canvas id="cpaPerChart"></canvas><div class="phint" style="margin:8px 0 0">CPA = витрати періоду / записи періоду (рівень менеджера, як на картці). «Вчора» шумить — мало записів за день; орієнтуйся на 7 днів / місяць.</div></div>
 <div class="chartbox"><h3>Записи по періодах — по менеджерах</h3><canvas id="bkPerChart"></canvas></div>
+<div id="dayCharts">
+<div class="chartbox"><h3>Ціна запису (CPA) по днях, $</h3><canvas id="cpaDayChart"></canvas><div class="phint" style="margin:8px 0 0">CPA за день = витрати дня / записи серед лідів, створених того дня. За день записів мало → лінія стрибуча з пропусками, це нормально.</div></div>
+<div class="chartbox"><h3>Записи по днях (за датою ліда)</h3><canvas id="bkDayChart"></canvas></div>
+</div>
 
 <h2 id="asTitle">Ад-сети (аудиторія · гео)</h2>
 <div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно. Рядки згруповані по місту й менеджеру.</div>
@@ -523,6 +527,20 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const bkDs=PORD.map(([pk,lbl])=>({label:lbl,data:perM.map(n=>bkP(M[n],pk)),backgroundColor:PCOL[pk]}));
   new Chart(cpaPerChart,{type:'bar',data:{labels:perM,datasets:cpaDs},options:{interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top'}},scales:{y:{beginAtZero:true,title:{display:true,text:'$ / запис'}}}}});
   new Chart(bkPerChart,{type:'bar',data:{labels:perM,datasets:bkDs},options:{interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top'}},scales:{y:{beginAtZero:true}}}});
+
+  // ---- CPA і записи ПО ДНЯХ (лінії, як CPL). Потребує bookingsDay з пайплайну ----
+  const hasBD=Object.values(M).some(m=>Array.isArray(m.bookingsDay));
+  if(hasBD){
+    const mkDayDs=fn=>Object.entries(M).filter(([n])=>!isInst(n)).map(([n,m])=>({label:n,
+      data:chartDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:fn(m,i);}),
+      borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
+    const cpaDay=(m,i)=>{const b=(m.bookingsDay||[])[i]||0;return b?Math.round((m.spend[i]||0)/b*100)/100:null;};
+    const bkDay=(m,i)=>{const v=(m.bookingsDay||[])[i];return v==null?null:v;};
+    new Chart(cpaDayChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDayDs(cpaDay)},options:{interaction:{mode:'index',intersect:false}}});
+    new Chart(bkDayChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDayDs(bkDay)},options:{interaction:{mode:'index',intersect:false}}});
+  } else {
+    document.getElementById('dayCharts').innerHTML='<div class="chartbox phint">Графіки CPA і записів по днях з\'являться після наступного оновлення даних (додається щоденна кількість записів).</div>';
+  }
 
   document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало) · «Нові записи сьогодні» вгорі = позначки запису, що з’явились у таблиці сьогодні (незалежно від дати ліда)<br>'+
     'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль / випадковий) → проблема <b>таргетингу</b>. '+
