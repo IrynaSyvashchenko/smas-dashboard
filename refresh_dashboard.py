@@ -537,10 +537,12 @@ def fetch_raw_map(barca_camps=frozenset()):
                 ph     = phone9(r.get("phone_number"))
                 ad_id  = _strip_id_prefix(r.get("ad_id"))
                 as_id  = _strip_id_prefix(r.get("adset_id"))
-                if not ph or not ad_id:
+                if BROKEN_AD in ad_id: ad_id = ""    # Meta не віддала ad_id через права
+                if BROKEN_AD in as_id: as_id = ""
+                # для АД-СЕТ-атрибуції досить adset_id — не викидаємо рядок лише через брак ad_id
+                # (раніше вимагали ad_id, і записи з adset_id без ad_id губились)
+                if not ph or (not ad_id and not as_id):
                     continue
-                if BROKEN_AD in ad_id or BROKEN_AD in as_id:
-                    continue                     # Meta не віддала ID через права доступу
                 raw_map[ph] = {"m": mgr, "ad_id": ad_id, "adset_id": as_id,
                                "ad":    str(r.get("ad_name") or ""),
                                "adset": str(r.get("adset_name") or "")}
@@ -554,7 +556,7 @@ def fetch_raw_map(barca_camps=frozenset()):
     try:
         n = 0
         for ph, hit in fetch_barcelona_raw(barca_camps).items():
-            if hit["ad_id"]:
+            if hit["ad_id"] or hit["adset_id"]:     # для ад-сета досить adset_id
                 raw_map[ph] = hit; n += 1
         if n:
             raw_ok.append(BARCA_MGR)
@@ -932,6 +934,12 @@ def main():
                 node["bookingsYest"] = v["bookingsYest"]
                 node["bookingsMonth"] = v["bookingsMonth"]
                 node["q"] = v["q"]                      # lead quality per period
+                # записи по днях (за датою СТВОРЕННЯ ліда) — для денних графіків CPA/записів
+                _bd = {}
+                for L in v.get("leadsQ", []):
+                    if L.get("bk") and L.get("cd"):
+                        _bd[L["cd"]] = _bd.get(L["cd"], 0) + 1
+                node["bookingsDay"] = [_bd.get(d, 0) for d in node.get("dates", [])]
                 old_now = set(v["old_keys"])
                 if base_same_day and (m in base_old):
                     node["bookingsOld1d"] = len(old_now - set(base_old[m]))
@@ -1001,6 +1009,21 @@ def main():
         raw_map, raw_ok = fetch_raw_map(barca_camps)
     except Exception as e:
         print("raw map failed:", e); raw_map, raw_ok = {}, []
+
+    # ДІАГНОСТИКА атрибуції записів до ад-сетів (сайт це поле ігнорує; читаємо ми з data.json):
+    # чому запис не сідає на ад-сет — телефон не в сирій вкладці, чи в сирій нема adset_id.
+    if bk:
+        diag = {}
+        for mgr, v in bk.items():
+            booked = [L for L in v.get("leadsQ", []) if L.get("bk")]
+            in_raw  = sum(1 for L in booked if raw_map.get(L["ph"]))
+            with_as = sum(1 for L in booked if (raw_map.get(L["ph"]) or {}).get("adset_id"))
+            diag[mgr] = {"booked": len(booked), "phone_in_raw": in_raw,
+                         "with_adset_id": with_as,
+                         "raw_rows": sum(1 for h in raw_map.values() if h.get("m") == mgr)}
+            print("  атрибуція %-6s: записів %d | телефон у сирій %d | з adset_id %d | сирих рядків %d"
+                  % (mgr, len(booked), in_raw, with_as, diag[mgr]["raw_rows"]))
+        out["_diag"] = {"raw_ok": raw_ok, "attribution": diag}
 
     def _merge_periods(field, fresh):
         """Свіжі періоди поверх старих: період, що не отримався, лишається зі
