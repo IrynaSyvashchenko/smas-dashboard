@@ -616,7 +616,10 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
                 if not _in_period(L["cd"], dfrom, dto):
                     continue
                 hit = raw_map.get(L["ph"])
-                if not hit or hit["m"] != mgr or not hit["adset_id"]:
+                # НЕ вимагаємо hit["m"]==mgr: у Парижі сирі вкладки перехресні, тому мітка
+                # менеджера в raw_map ненадійна, а adset_id — правильний. Менеджера ад-сета
+                # визначає кампанія (classify). Раніше ця вимога губила 11/13 записів Саиди.
+                if not hit or not hit["adset_id"]:
                     continue
                 q = qmap.setdefault(hit["adset_id"], {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
                 q["leads"] += 1
@@ -681,7 +684,7 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
                 if not L["bk"] or not _in_period(L["cd"], dfrom, dto):
                     continue
                 hit = raw_map.get(L["ph"])
-                if hit and hit["m"] == mgr and hit["ad_id"]:
+                if hit and hit["ad_id"]:      # мітка менеджера в raw_map ненадійна (див. build_adsets)
                     bmap[hit["ad_id"]] = bmap.get(hit["ad_id"], 0) + 1
 
         res = []
