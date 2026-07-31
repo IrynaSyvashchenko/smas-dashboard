@@ -99,7 +99,7 @@ tr:hover td{background:var(--card2)}
 <div class="tabs sm" id="crTabs"></div>
 <div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
 <div style="overflow-x:auto"><table id="crTable">
-<thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th></tr></thead>
+<thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th><th>% бюдж.·7д</th><th>Вердикт</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="crNote"></div>
 
@@ -223,6 +223,41 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
             <div class="row"><span class="l">Частота</span><b><span class="tag ${fcls}">${f??'—'}</span></b></div>`;
   };
 
+  // ---- Вердикти по креативах ----
+  // Доктрина: CPL/CTR/частоту судимо за 7 ДНІВ (швидкі сигнали, без лагу),
+  // CPA і записи — за МІСЯЦЬ (запис доганяє лід 1–5 днів, 7-денна CPA завжди занижує).
+  const crKey=c=>c.m+'|'+c.name+'|'+c.adset;
+  const crMo=new Map((CR.month||[]).map(c=>[crKey(c),c]));
+  const cr7=new Map((CR.d7||[]).map(c=>[crKey(c),c]));
+  // частка бюджету ад-сета за 7 днів (тільки активні, без інсти; поріг $15, щоб не шуміло)
+  const asSpend7=new Map();
+  for(const c of (CR.d7||[])){ if(isInst(c.m)||c.act===false) continue;
+    const k2=c.m+'|'+c.adset; asSpend7.set(k2,(asSpend7.get(k2)||0)+(c.spend||0)); }
+  const crShare=c=>{const c7=cr7.get(crKey(c)); if(!c7) return null;
+    const t=asSpend7.get(c.m+'|'+c.adset); return t&&t>=15?(c7.spend||0)/t:null;};
+  // «бюджет не туди»: креатив бере ≥60% спенду ад-сета·7д, а його CPA·місяць гірша ≥1.3×
+  // за сусіда з ≥3 записами. Meta оптимізує по лідах і записів НЕ бачить — сама не перерозподілить.
+  const misTag=new Map();   // crKey -> {share, rival, mycpa, rcpa}
+  {const byAs=new Map();
+   for(const c of (CR.month||[])){ if(isInst(c.m)||c.act===false) continue;
+     const k2=c.m+'|'+c.adset; if(!byAs.has(k2)) byAs.set(k2,[]); byAs.get(k2).push(c); }
+   for(const list of byAs.values()){ if(list.length<2) continue;
+     for(const c of list){ const sh=crShare(c); if(sh==null||sh<0.6) continue;
+       const best=list.filter(x=>x!==c&&(x.book||0)>=3&&x.cpa!=null).sort((a,b)=>a.cpa-b.cpa)[0];
+       if(best&&c.cpa!=null&&c.cpa>=best.cpa*1.3)
+         misTag.set(crKey(c),{share:sh,rival:best.name,mycpa:c.cpa,rcpa:best.cpa}); } } }
+  const crVerdict=c=>{   // -> [текст, клас] ; null = не судимо (інста/вимкнений/нема даних записів
+    if(isInst(c.m)||c.act===false) return null;
+    const mo=crMo.get(crKey(c))||{}, c7=cr7.get(crKey(c))||{};
+    const chk=M[c.m]?.check?.usd, spMo=mo.spend||0, bkMo=mo.book;
+    if(chk&&((bkMo===0&&spMo>=chk*0.25)||(mo.cpa!=null&&mo.cpa>=chk*0.25))) return ['вимикай','r'];
+    if((c7.freq!=null&&c7.freq>=2.2)||(c7.cpl!=null&&mo.cpl!=null&&(c7.leads||0)>=10&&c7.cpl>=mo.cpl*1.4)) return ['вигорає','y'];
+    if(spMo<30&&(bkMo??0)<3) return ['тест',''];
+    if(bkMo==null) return null;   // записи цього менеджера ще не читаються
+    if(mo.cpa!=null&&(bkMo||0)>=3&&mo.cpa<cpaT(M[c.m]?.city)[0]) return ['топ — тримай','g'];
+    return ['норм',''];
+  };
+
   // Алерти: тільки те, що вимагає ДІЇ і б'є по грошах.
   // Гроші без лідів -> вимкнути; дорогий запис (CPA vs чек) -> розібратись; частота -> замінити креатив.
   function buildAlerts(k){
@@ -257,6 +292,10 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         A.push(['bad',`💸 Креатив <b>${c.name}</b> (${c.m}): <b>${fmt(c.spend)}</b> без лідів — вимикай.`]);
       if(c.freq!=null&&c.freq>=2.5)
         A.push(['bad',`🔁 Креатив <b>${c.name}</b> (${c.m}): частота <b>${c.freq}</b> — вигорів, потрібна заміна.`]);
+    }
+    for(const [k3,t] of misTag){
+      const [m3,n3,a3]=k3.split('|');
+      A.push(['warn',`⚠️ Meta ллє бюджет у слабший креатив: <b>${n3}</b> (${m3}) бере <b>${Math.round(t.share*100)}%</b> бюджету ад-сета «${a3}», але запис у нього <b>${fmt(t.mycpa)}</b> проти <b>${fmt(t.rcpa)}</b> у <b>${t.rival}</b> — перевір: можливо, вимкнути його, щоб бюджет пішов на кращий.`]);
     }
     A.sort((a,b)=>(a[0]==='bad'?0:1)-(b[0]==='bad'?0:1));   // спочатку критичні
     const el=document.getElementById('alerts');
@@ -416,8 +455,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     let crCity='';
     for(const [mgr,rows] of groupByMgr(cr)){
       const ct=M[mgr]?.city||'';
-      if(ct&&ct!==crCity){crb.insertAdjacentHTML('beforeend',cityRow(ct,8));crCity=ct;}
-      crb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,8));
+      if(ct&&ct!==crCity){crb.insertAdjacentHTML('beforeend',cityRow(ct,10));crCity=ct;}
+      crb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,10));
       for(const c of [...rows].sort((x,y)=>((x.act===false)-(y.act===false))||((x.cpa??1e9)-(y.cpa??1e9)))){
         const ii=isInst(c.m), ia=(c.act===false);   // ia = вже не крутиться -> сірий рядок
         const noBk=(c.book==null);
@@ -425,13 +464,18 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         const cls=noBk?'':(c.cpa==null?'r':(c.cpa<ct2[0]?'g':c.cpa<ct2[1]?'y':'r'));
         const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<ct2[0]?'топ':c.cpa<ct2[1]?'норма':'дорого'));
         const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
+        const sh=(ii||ia)?null:crShare(c), v=(ii||ia)?null:crVerdict(c), mis=(ii||ia)?null:misTag.get(crKey(c));
+        const vcell=(v?`<span class="tag ${v[1]}"${v[1]?'':' style="background:var(--card2);color:var(--mut)"'}>${v[0]}</span>`:'—')
+                    +(mis?`<br><span class="tag y">⚠️ бюджет не туди</span>`:'');
         crb.insertAdjacentHTML('beforeend',`<tr${ia?' class="inact"':''}>
           <td>${c.name} · ${c.adset}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}</td>
           <td>${fmt(c.spend)}</td><td>${ii?'—':c.leads}</td><td>${ii?'—':fmt(c.cpl)}</td>
           <td>${c.ctr!=null?c.ctr+'%':'—'}</td>
           <td>${c.freq!=null?`<span class="tag ${fcls}">${c.freq}</span>`:'—'}</td>
           <td>${ii?'—':noBk?'—*':c.book}</td>
-          <td>${ii?'—':noBk?'—*':`${fmt(c.cpa)} <span class="tag ${cls}">${st}</span>`}</td></tr>`);
+          <td>${ii?'—':noBk?'—*':`${fmt(c.cpa)} <span class="tag ${cls}">${st}</span>`}</td>
+          <td>${sh!=null?Math.round(sh*100)+'%':'—'}</td>
+          <td>${vcell}</td></tr>`);
       }
     }
     const notes=[];
@@ -443,6 +487,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       const miss=[...new Set(cr.filter(c=>c.book==null&&!isInst(c.m)).map(c=>c.m))].join(', ');
       notes.push(`* Записи/CPA по креативах ще недоступні для: ${miss} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
     }
+    notes.push('ВЕРДИКТ судить креатив правильними періодами незалежно від обраної вкладки: CPL/CTR/частота — за 7 днів (швидкі сигнали), CPA і записи — за МІСЯЦЬ (запис доганяє лід 1–5 днів, тому 7-денна CPA завжди виглядає гіршою, ніж є). «Тест» = ще мало даних (<$30 і <3 записів) — не суди і не вимикай. «% бюдж.·7д» = частка витрат свого ад-сета за 7 днів: видно, куди Meta ллє бюджет; «⚠️ бюджет не туди» = креатив їсть ≥60% бюджету, а запис у нього ≥30% дорожчий за сусіда. ');
     notes.push('Пороги CPA: Прага — топ <$10, норма до $15; Париж і Барселона — топ <$20, норма до $25.');
     document.getElementById('crNote').textContent=notes.join('');
   }
@@ -530,7 +575,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
     '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії; Прага: Диана = 2 999 Kč (акція для моделей з 18.07), Даша = 3 990 Kč.<br>'+
     'Алерти про ціну запису (💰) рахуються завжди за останні 7 днів і порівнюються з чеком міста (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
-    '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta; ліди Парижа Meta рахує сама («ліди з листування»), записи Парижа і все по Празі Ірина вносить вручну.<br>'+
+    '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta;  ліди Парижа Meta рахує сама («ліди з листування»), записи Парижа і все по Празі Ірина вносить вручну.<br>'+
     'Дані: Meta Ads + Google-таблиця'
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
