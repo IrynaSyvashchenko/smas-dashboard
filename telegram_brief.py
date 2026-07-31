@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Вечірній Telegram-бриф по Meta-рекламі «SMAS-ліфтинг».
 
-Запускається з GitHub Actions о 22:30 за Прагою (20:30 UTC) — у хмарі, незалежно
-від того, чи ввімкнений комп'ютер Ірини. Читає готовий data.json з GitHub Pages,
-збирає короткий звіт за ОСТАННІЙ ЗАКРИТИЙ день і шле в Telegram через Bot API.
+Запускається з GitHub Actions ОДРАЗУ ПІСЛЯ оновлення даних (workflow_run після
+«Refresh dashboard data») — у хмарі, незалежно від комп'ютера Ірини. Шле лише після
+ВЕЧІРНЬОГО оновлення (година updated >= 21), коли дані за день готові; після денних
+оновлень main() тихо виходить. Читає свіжий data.json з raw.githubusercontent (main),
+збирає короткий звіт за день і шле в Telegram через Bot API.
 
 Дані вже пораховані дашбордом — тут нічого не тягнеться з Meta.
 Секрет (GitHub Actions): TELEGRAM_BOT_TOKEN — токен бота @ad_smas_lifting_bot.
@@ -12,7 +14,7 @@ import os, json, time, datetime, urllib.request, urllib.parse, sys
 
 CHAT_ID  = "901823018"
 TOKEN    = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-DATA_URL = "https://irynasyvashchenko.github.io/smas-dashboard/data.json"
+DATA_URL = "https://raw.githubusercontent.com/IrynaSyvashchenko/smas-dashboard/main/data.json"
 
 def _get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "smas-brief", "Cache-Control": "no-cache"})
@@ -92,21 +94,27 @@ def build(d):
         if (a.get("spend") or 0) >= 5 and (a.get("leads") or 0) == 0:
             dead.add(a["adset"])
             al.append("• %s (%s): $%.2f без лідів — глянь або вимкни" % (a["adset"], a["m"], a["spend"]))
-    for a in (d.get("adsets", {}).get("d7") or []):
-        m = a["m"]
-        if str(m).startswith("Инста") or a.get("act") is False or a["adset"] in dead:
+    # CPA рахуємо на рівні МЕНЕДЖЕРА за 7 днів (як на картці), а не по ад-сетах:
+    # записи не завжди прив'язуються до конкретного ад-сета -> адсет-CPA буває завищена.
+    d7from = (today - datetime.timedelta(days=6)).isoformat()
+    for name, n in M.items():
+        if str(name).startswith("Инста") or n.get("act") is False:
             continue
-        dl = days_live(m)
+        dl = days_live(name)
         if dl < 4:
             continue
         per = ("%d дн." % dl) if dl < 7 else "7 днів"
-        ck, cp = chk(m), a.get("cpa")
-        if (a.get("spend") or 0) >= 25 and (a.get("book") or 0) == 0:
-            al.append("• %s (%s): $%.0f за %s і 0 записів" % (a["adset"], m, a["spend"], per))
-        elif ck and cp is not None and cp >= ck * 0.25:
-            al.append("• %s (%s): запис $%.2f (%s) — дуже дорого" % (a["adset"], m, cp, per))
-        elif ck and cp is not None and cp >= ck * 0.15:
-            al.append("• %s (%s): запис $%.2f (%s) — дорожче 15%% чека" % (a["adset"], m, cp, per))
+        sp7 = round(sum(n["spend"][i] for i, dd in enumerate(n["dates"]) if dd >= d7from), 2)
+        bk7 = n.get("bookings7d") or 0
+        ck = chk(name)
+        if sp7 >= 50 and bk7 == 0:
+            al.append("• %s: $%.0f за %s і 0 записів" % (name, sp7, per))
+        elif bk7 and ck:
+            cp = sp7 / bk7
+            if cp >= ck * 0.25:
+                al.append("• %s: запис $%.2f (%s) — дуже дорого (≥25%% чека)" % (name, cp, per))
+            elif cp >= ck * 0.15:
+                al.append("• %s: запис $%.2f (%s) — дорожче 15%% чека" % (name, cp, per))
     for c in (d.get("creatives", {}).get("yest") or []):
         if c.get("act") is False or c.get("adset") in dead:
             continue
@@ -146,6 +154,14 @@ def main():
     if not TOKEN:
         sys.exit("ERROR: TELEGRAM_BOT_TOKEN не заданий (додай секрет у GitHub Actions)")
     d = json.loads(_get(DATA_URL + "?cb=%d" % int(time.time())).decode("utf-8"))
+    # Бриф триггериться після КОЖНОГО оновлення даних (workflow_run), але шлемо лише
+    # після ВЕЧІРНЬОГО (коли дані за день готові) — або коли запущено вручну.
+    manual = os.environ.get("GITHUB_EVENT_NAME", "") == "workflow_dispatch"
+    upd = d.get("updated", "")
+    hour = int(upd[11:13]) if len(upd) >= 13 else 0
+    if not manual and hour < 21:
+        print("skip: not evening yet (updated hour=%d)" % hour)
+        return
     text = build(d)
     send(text)
     print("sent, %d chars" % len(text))
