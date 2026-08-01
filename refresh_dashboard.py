@@ -397,12 +397,13 @@ def _tally_manager(rows, today, phone_of, row_ok):
         seen[(str(phone_of(r)), str(r.get("created_time")))] = r
     yest = today - datetime.timedelta(days=1)
     month_start = today.replace(day=1)
+    pm_start = (month_start - datetime.timedelta(days=1)).replace(day=1)   # попередній місяць
     booked = b7 = b1 = leads = 0
-    bY = bM = 0                         # bookings among leads created yesterday / this month
+    bY = bM = bPM = 0                   # bookings among leads created yesterday / this / prev month
     old_keys = []                       # keys of booked leads created BEFORE today
     booked_keys = []                    # ключі ВСІХ поточних записів (для реєстру «коли з'явився запис»)
     # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
-    Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "all")}
+    Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "pmonth", "all")}
     leadsQ = []   # усі мої ліди з телефоном: дата + прапорці (для таблиць ад-сетів/креативів по періодах)
 
     for k, r in seen.items():
@@ -424,6 +425,7 @@ def _tally_manager(rows, today, phone_of, row_ok):
             if cd == yest: buckets.append("yest")
             if 0 <= (today - cd).days < 7: buckets.append("d7")
             if cd >= month_start: buckets.append("month")
+            if pm_start <= cd < month_start: buckets.append("pmonth")
         for p in buckets:
             Q[p]["leads"] += 1
             if bd: Q[p]["bad"] += 1
@@ -442,6 +444,7 @@ def _tally_manager(rows, today, phone_of, row_ok):
                     b7 += 1
                 if cd == yest: bY += 1
                 if cd >= month_start: bM += 1
+                if pm_start <= cd < month_start: bPM += 1
                 if cd == today:
                     b1 += 1
                 elif cd < today:
@@ -450,7 +453,7 @@ def _tally_manager(rows, today, phone_of, row_ok):
                 old_keys.append("%s|%s" % (k[0], k[1]))   # unknown date -> treat as old
 
     return {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
-            "bookingsYest": bY, "bookingsMonth": bM,
+            "bookingsYest": bY, "bookingsMonth": bM, "bookingsPrevMonth": bPM,
             "leads_seen": leads, "old_keys": old_keys, "q": Q,
             "leadsQ": leadsQ, "booked_keys": booked_keys}
 
@@ -936,6 +939,7 @@ def main():
                 node["bookings1d"] = v["bookings1d"]
                 node["bookingsYest"] = v["bookingsYest"]
                 node["bookingsMonth"] = v["bookingsMonth"]
+                node["bookingsPrevMonth"] = v.get("bookingsPrevMonth", 0)
                 node["q"] = v["q"]                      # lead quality per period
                 # записи по днях (за датою СТВОРЕННЯ ліда) — для денних графіків CPA/записів
                 _bd = {}
@@ -979,7 +983,8 @@ def main():
         node = out["managers"].get(m)
         if node is None:
             continue
-        tot = b7 = bY = bM = b1 = 0
+        tot = b7 = bY = bM = bPM = b1 = 0
+        _ms = _td.replace(day=1); _pms = (_ms - datetime.timedelta(days=1)).replace(day=1)
         for ds, v in days.items():
             b = int(v.get("b", 0))
             if not b:
@@ -988,18 +993,24 @@ def main():
             tot += b
             if 0 <= (_td - cd).days < 7: b7 += b
             if cd == _td - datetime.timedelta(days=1): bY += b
-            if cd >= _td.replace(day=1): bM += b
+            if cd >= _ms: bM += b
+            if _pms <= cd < _ms: bPM += b
             if cd == _td: b1 += b
         node["bookings"] = tot; node["bookings7d"] = b7; node["bookingsYest"] = bY
-        node["bookingsMonth"] = bM; node["bookings1d"] = b1; node["bookingsToday"] = b1
+        node["bookingsMonth"] = bM; node["bookingsPrevMonth"] = bPM
+        node["bookings1d"] = b1; node["bookingsToday"] = b1
 
     # --- Meta-метрики по періодах (CTR / CPM / частота) + ад-сети й креативи по періодах ---
     td = datetime.date.fromisoformat(TODAY)
     yest_s = (td - datetime.timedelta(days=1)).isoformat()
     d7from = (td - datetime.timedelta(days=6)).isoformat()
     mstart = td.replace(day=1).isoformat()
+    _pme = td.replace(day=1) - datetime.timedelta(days=1)   # попередній календарний місяць
+    _pms = _pme.replace(day=1)
     PERIODS = {"yest": (yest_s, yest_s), "d7": (d7from, TODAY),
-               "month": (mstart, TODAY), "all": (DATE_FROM, TODAY)}
+               "month": (mstart, TODAY),
+               "pmonth": (_pms.isoformat(), _pme.isoformat()),
+               "all": (DATE_FROM, TODAY)}
     try:
         pm = period_metrics(PERIODS)
         for m, node in out["managers"].items():
