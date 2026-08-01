@@ -134,6 +134,10 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const d7from=addD(today,-6);
   const monthPref=today.slice(0,7);
   const monthName=MONTHS[parseInt(today.slice(5,7),10)-1];
+  // попередній календарний місяць (вкладка лишається після зміни місяця: Липень+Серпень і т.д.)
+  const pmEnd=new Date(monthPref+'-01T00:00:00Z'); pmEnd.setUTCDate(0);
+  const pmPref=pmEnd.toISOString().slice(0,7), pmLast=pmEnd.toISOString().slice(0,10);
+  const pmName=MONTHS[parseInt(pmPref.slice(5,7),10)-1];
 
   // ---- сьогодні: окрема чесна смужка (день ще неповний) ----
   const sumAll=(key,pred)=>Object.values(M).reduce((s,m)=>s+m.dates.reduce((a,d,i)=>a+(pred(d)?(m[key][i]||0):0),0),0);
@@ -158,8 +162,13 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
           hint:`${dd(d7from)} – ${dd(today)} (включно з неповним сьогодні).`,
           pred:d=>d>=d7from, bk:m=>m.bookings7d??0,
           extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d7from).length}</b></div>`},
+    pmonth:{label:pmName,qk:'pmonth',range:`${dd(pmPref+'-01')} – ${dd(pmLast)}`,
+          hint:`Попередній календарний місяць (${pmName}) — закритий, цифри вже не зміняться.`,
+          pred:d=>d.startsWith(pmPref),
+          bk:m=>m.bookingsPrevMonth??((m.bookingsDay||[]).reduce((s,v,i)=>s+((m.dates[i]||'').startsWith(pmPref)?(v||0):0),0)),
+          extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(pmPref)).length}</b></div>`},
     month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(today)}`,
-          hint:`Календарний місяць — те, що йде у звіт для керівництва.`,
+          hint:`Поточний календарний місяць — те, що йде у звіт для керівництва.`,
           pred:d=>d.startsWith(monthPref), bk:m=>m.bookingsMonth??0,
           extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(monthPref)).length}</b></div>`},
     all:{label:'Весь час',qk:'all',range:`${dd(allDates[0])} – ${dd(today)}`,
@@ -227,7 +236,17 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // Доктрина: CPL/CTR/частоту судимо за 7 ДНІВ (швидкі сигнали, без лагу),
   // CPA і записи — за МІСЯЦЬ (запис доганяє лід 1–5 днів, 7-денна CPA завжди занижує).
   const crKey=c=>c.m+'|'+c.name+'|'+c.adset;
-  const crMo=new Map((CR.month||[]).map(c=>[crKey(c),c]));
+  // CPA-зрілість = ПОТОЧНИЙ + ПОПЕРЕДНІЙ місяць разом: на початку місяця самого «month»
+  // замало (1-го числа все ставало б «тест»), а два місяці — стабільне вікно.
+  const crMo=new Map();
+  for(const src of [CR.pmonth,CR.month]) for(const c of (src||[])){
+    const k2=crKey(c), t=crMo.get(k2)||{m:c.m,name:c.name,adset:c.adset,spend:0,leads:0,book:null,cpl:null,cpa:null};
+    t.spend+=c.spend||0; t.leads+=c.leads||0;
+    if(c.book!=null) t.book=(t.book||0)+c.book;
+    crMo.set(k2,t);
+  }
+  for(const t of crMo.values()){ t.cpl=t.leads?t.spend/t.leads:null; t.cpa=t.book?t.spend/t.book:null; }
+  const crAct=new Map((CR.all||[]).map(c=>[crKey(c),c.act!==false]));
   const cr7=new Map((CR.d7||[]).map(c=>[crKey(c),c]));
   // частка бюджету ад-сета за 7 днів (тільки активні, без інсти; поріг $15, щоб не шуміло)
   const asSpend7=new Map();
@@ -239,7 +258,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // за сусіда з ≥3 записами. Meta оптимізує по лідах і записів НЕ бачить — сама не перерозподілить.
   const misTag=new Map();   // crKey -> {share, rival, mycpa, rcpa}
   {const byAs=new Map();
-   for(const c of (CR.month||[])){ if(isInst(c.m)||c.act===false) continue;
+   for(const c of crMo.values()){ if(isInst(c.m)||crAct.get(crKey(c))===false) continue;
      const k2=c.m+'|'+c.adset; if(!byAs.has(k2)) byAs.set(k2,[]); byAs.get(k2).push(c); }
    for(const list of byAs.values()){ if(list.length<2) continue;
      for(const c of list){ const sh=crShare(c); if(sh==null||sh<0.6) continue;
@@ -487,7 +506,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       const miss=[...new Set(cr.filter(c=>c.book==null&&!isInst(c.m)).map(c=>c.m))].join(', ');
       notes.push(`* Записи/CPA по креативах ще недоступні для: ${miss} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
     }
-    notes.push('ВЕРДИКТ судить креатив правильними періодами незалежно від обраної вкладки: CPL/CTR/частота — за 7 днів (швидкі сигнали), CPA і записи — за МІСЯЦЬ (запис доганяє лід 1–5 днів, тому 7-денна CPA завжди виглядає гіршою, ніж є). «Тест» = ще мало даних (<$30 і <3 записів) — не суди і не вимикай. «% бюдж.·7д» = частка витрат свого ад-сета за 7 днів: видно, куди Meta ллє бюджет; «⚠️ бюджет не туди» = креатив їсть ≥60% бюджету, а запис у нього ≥30% дорожчий за сусіда. ');
+    notes.push('ВЕРДИКТ судить креатив правильними періодами незалежно від обраної вкладки: CPL/CTR/частота — за 7 днів (швидкі сигнали), CPA і записи — за ПОТОЧНИЙ + ПОПЕРЕДНІЙ місяць (запис доганяє лід 1–5 днів, тому 7-денна CPA завжди виглядає гіршою, ніж є). «Тест» = ще мало даних (<$30 і <3 записів) — не суди і не вимикай. «% бюдж.·7д» = частка витрат свого ад-сета за 7 днів: видно, куди Meta ллє бюджет; «⚠️ бюджет не туди» = креатив їсть ≥60% бюджету, а запис у нього ≥30% дорожчий за сусіда. ');
     notes.push('Пороги CPA: Прага — топ <$10, норма до $15; Париж і Барселона — топ <$20, норма до $25.');
     document.getElementById('crNote').textContent=notes.join('');
   }
@@ -575,7 +594,6 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
     '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії; Прага: Диана = 2 999 Kč (акція для моделей з 18.07), Даша = 3 990 Kč.<br>'+
     'Алерти про ціну запису (💰) рахуються завжди за останні 7 днів і порівнюються з чеком міста (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
-    '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta; ліди Парижа Meta рахує сама («ліди з листування»), записи Парижа і все по Празі Ірина вносить вручну.<br>'+
     'Дані: Meta Ads + Google-таблиця'
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
