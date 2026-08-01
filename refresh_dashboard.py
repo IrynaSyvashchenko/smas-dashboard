@@ -20,7 +20,7 @@ Env vars (GitHub Actions secrets):
   SHEETS_KEY       -> shared secret checked by the bridge
 Reads/writes ./data.json.
 """
-import os, json, datetime, urllib.request, urllib.parse, urllib.error, sys
+import os, json, time, datetime, urllib.request, urllib.parse, urllib.error, sys
 
 API_KEY    = os.environ.get("WINDSOR_API_KEY", "").strip()
 def _clean_secret(name):
@@ -323,13 +323,23 @@ def fetch_sheet_rows(gid=None, ss=None, sheet=None):
         url += "&sheet=%s" % urllib.parse.quote(sheet)
     else:
         url += "&gid=%s" % gid
-    try:
-        payload = http_json(url)           # Apps Script віддає 302 -> urllib йде за ним сам
-    except urllib.error.HTTPError as e:
-        body = ""
-        try: body = e.read().decode("utf-8", "replace")[:300]
-        except Exception: pass
-        raise RuntimeError("HTTP %s: %s" % (e.code, body))
+    # міст інколи флейкає (разові 5xx/timeout) — до 3 спроб, щоб один збій
+    # не лишав менеджера без записів/якості на цілий цикл оновлення
+    payload = None; last_err = None
+    for _att in range(3):
+        try:
+            payload = http_json(url)       # Apps Script віддає 302 -> urllib йде за ним сам
+            break
+        except urllib.error.HTTPError as e:
+            body = ""
+            try: body = e.read().decode("utf-8", "replace")[:300]
+            except Exception: pass
+            last_err = RuntimeError("HTTP %s: %s" % (e.code, body))
+        except Exception as e:
+            last_err = e
+        time.sleep(4)
+    if payload is None:
+        raise last_err
     if isinstance(payload, dict) and payload.get("error"):
         if payload["error"] == "forbidden":
             raise RuntimeError("bridge: forbidden — секрет SHEETS_KEY (%d символів) не збігається "
@@ -1050,11 +1060,27 @@ def main():
 
     def _merge_periods(field, fresh):
         """Свіжі періоди поверх старих: період, що не отримався, лишається зі
-        старими даними (той самий принцип «ніколи не зануляти на помилці»)."""
+        старими даними (той самий принцип «ніколи не зануляти на помилці»).
+        Додатково РЯДКОВИЙ перенос: якщо у свіжому рядку записи/якість не порахувались
+        (CRM-вкладка менеджера не прочиталась цього разу), тягнемо їх зі старого рядка
+        того ж періоду — разовий збій мосту не має затирати таблиці на «—*»."""
         if not fresh:
             print(field, "failed entirely -> carrying over old ones"); return
         prev = out.get(field)
         if isinstance(prev, dict):        # старий формат (list) просто замінюємо
+            rid = ((lambda r: (r.get("m"), r.get("campaign"), r.get("adset"))) if field == "adsets"
+                   else (lambda r: (r.get("m"), r.get("name"), r.get("adset"))))
+            for per, rows in fresh.items():
+                old = {rid(r): r for r in (prev.get(per) or []) if isinstance(r, dict)}
+                n = 0
+                for r in rows:
+                    o = old.get(rid(r))
+                    if not o: continue
+                    if field == "adsets" and r.get("q") is None and o.get("q") is not None:
+                        r["q"] = o["q"]; r["book"] = o.get("book"); r["cpa"] = o.get("cpa"); n += 1
+                    elif field == "creatives" and r.get("book") is None and o.get("book") is not None:
+                        r["book"] = o.get("book"); r["cpa"] = o.get("cpa"); r["conv"] = o.get("conv"); n += 1
+                if n: print("  %s[%s]: перенесено записи/якість зі старих рядків: %d" % (field, per, n))
             merged = dict(prev); merged.update(fresh); fresh = merged
         out[field] = fresh
 
