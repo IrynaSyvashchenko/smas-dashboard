@@ -1037,19 +1037,29 @@ def main():
         reg = cur.get("_bookReg") or {}
         today_local = datetime.datetime.now(TZ).date().isoformat()
         new_reg = dict(reg)   # менеджери, яких цей запуск не оновив, зберігають свій реєстр
+        # «знято сьогодні» — позначки, що зникли з таблиці протягом дня (скасування,
+        # «уже записана», зміна статусу). Накопичується в _bookRemoved за день,
+        # щоб Ірина бачила, чому «нових записів сьогодні» поменшало.
+        rem_prev = cur.get("_bookRemoved") or {}
+        rem_by = dict(rem_prev.get("byMgr") or {}) if rem_prev.get("date") == today_local else {}
         for m, v in bk.items():
             if m not in out["managers"] or v["leads_seen"] <= 0:
                 continue
             booked_set = set(v["booked_keys"])
             mreg = dict(reg.get(m) or {})
             migrate = m not in reg
+            removed_now = sum(1 for kk in mreg if kk not in booked_set)
+            if removed_now:
+                rem_by[m] = rem_by.get(m, 0) + removed_now
             for kk in booked_set:
                 if kk not in mreg:
                     mreg[kk] = "" if migrate else today_local
             mreg = {kk: d for kk, d in mreg.items() if kk in booked_set}   # знятий запис -> геть
             new_reg[m] = mreg
             out["managers"][m]["bookingsToday"] = sum(1 for d in mreg.values() if d == today_local)
+            out["managers"][m]["bookingsRemovedToday"] = rem_by.get(m, 0)
         out["_bookReg"] = new_reg
+        out["_bookRemoved"] = {"date": today_local, "byMgr": rem_by}
 
     # Записи Instagram-карток — з INST_MANUAL (незалежно від Google-таблиці)
     _td = datetime.date.fromisoformat(TODAY)
