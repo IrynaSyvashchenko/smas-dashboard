@@ -147,9 +147,14 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const perB=Object.entries(M).map(([n,m])=>({n,c:m.bookingsToday??((m.bookings1d??0)+(m.bookingsOld1d??0))})).filter(x=>x.c>0).sort((a,b)=>b.c-a.c);
   const tB=perB.reduce((s,x)=>s+x.c,0);
   const bookStr=tB?`<b>${tB}</b> — ${perB.map(x=>`${x.n} <b>${x.c}</b>`).join(' · ')}`:'<b>0</b>';
+  // знято за день: позначки запису, які менеджери прибрали/змінили сьогодні
+  // (скасування, «уже записана») — пояснює, чому «нових записів» могло поменшати
+  const remB=Object.entries(M).map(([n,m])=>({n,c:m.bookingsRemovedToday||0})).filter(x=>x.c>0).sort((a,b)=>b.c-a.c);
+  const tR=remB.reduce((s,x)=>s+x.c,0);
+  const remStr=tR?` · знято позначок за день: <b>−${tR}</b> (${remB.map(x=>`${x.n} ${x.c}`).join(' · ')})`:'';
   document.getElementById('todayStrip').innerHTML=
     `⏳ <b>Сьогодні (${dd(today)}) — день ще неповний</b>, дані Meta і записи доходять із затримкою: `+
-    `ліди <b>${tLeads}</b> · витрати <b>${fmt(tSpend)}</b> · нових записів сьогодні: ${bookStr}. `+
+    `ліди <b>${tLeads}</b> · витрати <b>${fmt(tSpend)}</b> · нових записів сьогодні: ${bookStr}${remStr}. `+
     `Для рішень дивись «Вчора» — це перший повний день.`;
 
   // ---- періоди ----
@@ -594,7 +599,6 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
     '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії; Прага: Диана = 2 999 Kč (акція для моделей з 18.07), Даша = 3 990 Kč.<br>'+
     'Алерти про ціну запису (💰) рахуються завжди за останні 7 днів і порівнюються з чеком міста (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
-    '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta; ліди Парижа Meta рахує сама («ліди з листування»), записи Парижа і все по Празі Ірина вносить вручну.<br>'+
     'Дані: Meta Ads + Google-таблиця'
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
