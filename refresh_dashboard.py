@@ -65,6 +65,13 @@ INST_MANUAL = {
     INST_MGR_PARIS:  {"2026-07-01": {"l": 0, "b": 14}},    # факт адміністратора 03.08: 14 записів за липень (ліди авто з Meta)
 }
 
+# Фактичні записи від АДМІНІСТРАТОРА салону по місяцях (він рахує всі записи менеджера).
+# Сайт показує їх окремою вкладкою «<Місяць> (факт)». Ключ = "YYYY-MM".
+FACT_BOOKINGS = {
+    "2026-07": {"Диана": 151, "Даша": 56, "Таня": 114, "Саида": 86, "Мага": 20,
+                "Алиса": 76, "Юлиана": 15, "Инста Прага": 18, "Инста Париж": 14},
+}
+
 # Нові менеджери: вузол у data.json створюється автоматично при першому запуску
 MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "2026-07-09"},
                      "Мага":   {"city": "Париж", "start": "2026-07-18"},
@@ -976,6 +983,7 @@ def main():
     out["updated"] = datetime.datetime.now(TZ).replace(microsecond=0).isoformat()
     out["metaSource"] = META_SOURCE["used"]   # graph | windsor — видно в шапці сайту
     out["periodNote"] = "оновлюється кожні 3 год з 7:00 до 22:00 за Прагою (вночі пауза)"
+    out["factBookings"] = FACT_BOOKINGS   # факт адміністратора -> вкладка «<Місяць> (факт)»
 
     # Meta-side per manager (bookings carried for now; refined below)
     for m, node in out["managers"].items():
