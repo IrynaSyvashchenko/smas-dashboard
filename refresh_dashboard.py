@@ -20,7 +20,7 @@ Env vars (GitHub Actions secrets):
   SHEETS_KEY       -> shared secret checked by the bridge
 Reads/writes ./data.json.
 """
-import os, json, time, datetime, urllib.request, urllib.parse, urllib.error, sys
+import os, re, json, time, datetime, urllib.request, urllib.parse, urllib.error, sys
 
 API_KEY    = os.environ.get("WINDSOR_API_KEY", "").strip()
 def _clean_secret(name):
@@ -265,6 +265,25 @@ def is_booked(r):
             return True
     return False
 
+def _book_date(r):
+    """Дата САМОГО ЗАПИСУ з «дата_и_время_записи» (для аудиту: адміністратор рахує
+    записи по цій даті, а дашборд — по даті створення ліда). None = не розпарсилось."""
+    s = str(r.get("дата_и_время_записи") or "").strip()
+    if s in ("", "0", "-", "—", "None"):
+        return None
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", s)          # ISO 2026-07-29
+    if m:
+        try: return datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError: return None
+    m = re.search(r"(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?", s)   # 29.07 / 29.07.26 / 29/07/2026
+    if m:
+        y = m.group(3)
+        y = int(y) if y else datetime.date.fromisoformat(TODAY).year
+        if y < 100: y += 2000
+        try: return datetime.date(y, int(m.group(2)), int(m.group(1)))
+        except ValueError: return None
+    return None
+
 # --- lead quality ------------------------------------------------------------
 # Воронка ліда: НЕЦІЛЬОВИЙ -> БЕЗ РЕАКЦІЇ -> ЛІКВІД (вийшов на контакт) -> ЗАПИС
 #
@@ -415,6 +434,12 @@ def _tally_manager(rows, today, phone_of, row_ok):
     # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
     Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "pmonth", "all")}
     leadsQ = []   # усі мої ліди з телефоном: дата + прапорці (для таблиць ад-сетів/креативів по періодах)
+    # АУДИТ підрахунку записів (порівняння з фактами адміністратора):
+    #   pm_bd/m_bd  = записи по ДАТІ ЗАПИСУ (дата_и_время_записи) у попер./поточ. місяці
+    #   bd_none     = записи, де дату запису не вдалось розпарсити
+    #   miss        = НЕ пораховані рядки, але зі словом «запис» у статусах (варіанти
+    #                 типу «записалась», яких «запись»-матчер не ловить) + приклади
+    audit = {"pm_bd": 0, "m_bd": 0, "bd_none": 0, "miss": 0, "samples": []}
 
     for k, r in seen.items():
         if not row_ok(r):
@@ -429,6 +454,24 @@ def _tally_manager(rows, today, phone_of, row_ok):
         bk = is_booked(r)
         bd = (not bk) and is_bad(r)
         nr = (not bk) and (not bd) and is_noresp(r)
+
+        # -- аудит: записи по даті ЗАПИСУ + пропущені варіанти позначок --
+        if bk:
+            _bdt = _book_date(r)
+            if _bdt is None:
+                audit["bd_none"] += 1
+            else:
+                if pm_start <= _bdt < month_start: audit["pm_bd"] += 1
+                if _bdt >= month_start:            audit["m_bd"] += 1
+        else:
+            _st = _statuses(r)
+            if "запис" in _st:
+                audit["miss"] += 1
+                if len(audit["samples"]) < 12:
+                    _v = next((str(r.get(sf)) for sf in STATUS_FIELDS
+                               if "запис" in str(r.get(sf) or "").lower()), "")
+                    if _v and _v not in audit["samples"]:
+                        audit["samples"].append(_v[:60])
 
         buckets = ["all"]
         if cd:
@@ -462,7 +505,7 @@ def _tally_manager(rows, today, phone_of, row_ok):
             else:
                 old_keys.append("%s|%s" % (k[0], k[1]))   # unknown date -> treat as old
 
-    return {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
+    return {"bookings": booked, "bookings7d": b7, "bookings1d": b1, "bkAudit": audit,
             "bookingsYest": bY, "bookingsMonth": bM, "bookingsPrevMonth": bPM,
             "leads_seen": leads, "old_keys": old_keys, "q": Q,
             "leadsQ": leadsQ, "booked_keys": booked_keys}
@@ -1057,6 +1100,17 @@ def main():
             print("  атрибуція %-6s: d7 booked %d | in_raw %d | adset %d | adset&same_m %d"
                   % (mgr, len(b7), b7_in, b7_as, b7_asm))
         out["_diag"] = {"raw_ok": raw_ok, "attribution": diag}
+        # аудит записів: по даті ЗАПИСУ vs по даті ЛІДА + пропущені формулювання позначок
+        ba = {}
+        for mgr, v in bk.items():
+            a = v.get("bkAudit")
+            if not a: continue
+            ba[mgr] = dict(a, pm_lead=v.get("bookingsPrevMonth"), m_lead=v.get("bookingsMonth"),
+                           total=v.get("bookings"))
+            print("  аудит %-6s: лип по даті ЗАПИСУ %d (по даті ліда %d) | без дати %d | «запис»-але-не-пораховано %d %s"
+                  % (mgr, a["pm_bd"], v.get("bookingsPrevMonth") or 0, a["bd_none"],
+                     a["miss"], a["samples"][:3]))
+        out["_diag"]["bookAudit"] = ba
 
     def _merge_periods(field, fresh):
         """Свіжі періоди поверх старих: період, що не отримався, лишається зі
