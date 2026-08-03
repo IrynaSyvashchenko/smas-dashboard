@@ -138,6 +138,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const pmEnd=new Date(monthPref+'-01T00:00:00Z'); pmEnd.setUTCDate(0);
   const pmPref=pmEnd.toISOString().slice(0,7), pmLast=pmEnd.toISOString().slice(0,10);
   const pmName=MONTHS[parseInt(pmPref.slice(5,7),10)-1];
+  // фактичні записи від адміністратора за попередній місяць -> окрема вкладка «<Місяць> (факт)»
+  const FB=(D.factBookings||{})[pmPref];
 
   // ---- сьогодні: окрема чесна смужка (день ще неповний) ----
   const sumAll=(key,pred)=>Object.values(M).reduce((s,m)=>s+m.dates.reduce((a,d,i)=>a+(pred(d)?(m[key][i]||0):0),0),0);
@@ -172,6 +174,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
           pred:d=>d.startsWith(pmPref),
           bk:m=>m.bookingsPrevMonth??((m.bookingsDay||[]).reduce((s,v,i)=>s+((m.dates[i]||'').startsWith(pmPref)?(v||0):0),0)),
           extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(pmPref)).length}</b></div>`},
+    ...(FB?{pmfact:{label:pmName+' (факт)',qk:'pmonth',range:`${dd(pmPref+'-01')} – ${dd(pmLast)}`,
+          hint:`${pmName}: ЗАПИСИ — факт від адміністратора (всі записи менеджера, включно з нерекламними позначками). Витрати й заявки — з Meta.`,
+          pred:d=>d.startsWith(pmPref),
+          bk:(m,name)=>FB[name]??0,
+          extra:m=>`<div class="row"><span class="l">Джерело записів</span><b>адміністратор</b></div>`}}:{}),
     month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(today)}`,
           hint:`Поточний календарний місяць — те, що йде у звіт для керівництва.`,
           pred:d=>d.startsWith(monthPref), bk:m=>m.bookingsMonth??0,
@@ -189,6 +196,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const oldFmt=Array.isArray(D.adsets)||Array.isArray(D.creatives);
   const normP=x=>Array.isArray(x)?{yest:x,d7:x,month:x,all:x}:(x||{});
   const AS=normP(D.adsets), CR=normP(D.creatives);
+  if(FB){AS.pmfact=AS.pmonth||[];CR.pmfact=CR.pmonth||[];}   // вкладка «(факт)» у таблицях показує липневі дані
   const OLDFMT_NOTE='⚠️ Дані таблиці поки за останні 7 днів (старий формат) — перемикання періодів запрацює після наступного автооновлення. ';
 
   // ROAS = записи x середній чек / витрати. Оцінка: запис ще не оплачена процедура.
@@ -350,7 +358,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       let sp=0,ld=0;
       m.dates.forEach((d,i)=>{ if(p.pred(d)){ sp+=m.spend[i]||0; ld+=m.leads[i]||0; } });
       sp=Math.round(sp*100)/100;
-      const bk=p.bk(m);
+      const bk=p.bk(m,name);
       tSp+=sp; tLd+=ld; tBk+=bk;
       if(m.check&&sp){ tRev+=bk*m.check.usd; tRevSp+=sp; }
       const cpl=ld?sp/ld:null, cpa=bk?sp/bk:null, conv=ld?Math.round(bk/ld*1000)/10+'%':'—';
@@ -599,7 +607,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
     '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії; Прага: Диана = 2 999 Kč (акція для моделей з 18.07), Даша = 3 990 Kč.<br>'+
     'Алерти про ціну запису (💰) рахуються завжди за останні 7 днів і порівнюються з чеком міста (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
-    '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta; ліди Парижа Meta рахує сама («ліди з листування»), записи Парижа і все по Празі Ірина вносить вручну.<br>'+
+    '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta;  ліди Парижа Meta рахує сама («ліди з листування»), записи Парижа і все по Празі Ірина вносить вручну.<br>'+
     'Дані: Meta Ads + Google-таблиця'
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
