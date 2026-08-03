@@ -261,7 +261,10 @@ def is_booked(r):
     if dz not in ("", "0", "-", "—", "None"):
         return True
     for sf in STATUS_FIELDS:
-        if "запись" in str(r.get(sf) or "").lower():   # matches "Запись из звонка/WhatsApp"
+        s = str(r.get(sf) or "").lower()
+        # «запис» ловить усі форми: «запись», «записана», «записалась», «уже записаана» (одруківки);
+        # заперечення відсікаємо («не записалась», «отказ от записи», «без записи»)
+        if "запис" in s and not any(n in s for n in ("не запис", "отказ", "без запис")):
             return True
     return False
 
@@ -439,10 +442,20 @@ def _tally_manager(rows, today, phone_of, row_ok):
     #   bd_none     = записи, де дату запису не вдалось розпарсити
     #   miss        = НЕ пораховані рядки, але зі словом «запис» у статусах (варіанти
     #                 типу «записалась», яких «запись»-матчер не ловить) + приклади
-    audit = {"pm_bd": 0, "m_bd": 0, "bd_none": 0, "miss": 0, "samples": []}
+    #   pm_others   = записи серед ЧУЖИХ лідів (інший таргетолог) з датою ліда в попер.
+    #                 місяці — перевірка гіпотези «адміністратор рахує всіх, дашборд — Ірину»
+    audit = {"pm_bd": 0, "m_bd": 0, "bd_none": 0, "miss": 0, "samples": [],
+             "pm_others": 0, "others_bk": 0}
 
     for k, r in seen.items():
         if not row_ok(r):
+            if is_booked(r):
+                audit["others_bk"] += 1
+                try:
+                    cd0 = datetime.date.fromisoformat(str(r.get("created_time") or "")[:10])
+                    if pm_start <= cd0 < month_start: audit["pm_others"] += 1
+                except Exception:
+                    pass
             continue
         leads += 1
         ct = str(r.get("created_time") or "")[:10]
@@ -1107,9 +1120,9 @@ def main():
             if not a: continue
             ba[mgr] = dict(a, pm_lead=v.get("bookingsPrevMonth"), m_lead=v.get("bookingsMonth"),
                            total=v.get("bookings"))
-            print("  аудит %-6s: лип по даті ЗАПИСУ %d (по даті ліда %d) | без дати %d | «запис»-але-не-пораховано %d %s"
+            print("  аудит %-6s: лип по даті ЗАПИСУ %d (по даті ліда %d) | без дати %d | пропущено %d %s | ЧУЖІ ліди: лип %d (всього %d)"
                   % (mgr, a["pm_bd"], v.get("bookingsPrevMonth") or 0, a["bd_none"],
-                     a["miss"], a["samples"][:3]))
+                     a["miss"], a["samples"][:3], a.get("pm_others", 0), a.get("others_bk", 0)))
         out["_diag"]["bookAudit"] = ba
 
     def _merge_periods(field, fresh):
