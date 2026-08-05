@@ -67,10 +67,62 @@ INST_MANUAL = {
 
 # Фактичні записи від АДМІНІСТРАТОРА салону по місяцях (він рахує всі записи менеджера).
 # Сайт показує їх окремою вкладкою «<Місяць> (факт)». Ключ = "YYYY-MM".
+# Ручні числа мають ПРІОРИТЕТ над авто-фактом з реєстру (липень звірений з адміном 03.08).
 FACT_BOOKINGS = {
     "2026-07": {"Диана": 151, "Даша": 56, "Таня": 114, "Саида": 86, "Мага": 20,
                 "Алиса": 76, "Юлиана": 15, "Инста Прага": 18, "Инста Париж": 14},
 }
+
+# Реєстр адміністратора: щоденна таблиця «дата | таргетолог | админ | название инст |
+# новые заявки | запись из новых | запись из старых | в запись всего | ...».
+ADMIN_SS  = "1-KjfT3Q8kc3UEijfynV1Ha5PGlXeLUL_Iu9IWS4iyLA"
+ADMIN_GID = "1593394532"
+
+def _admin_mgr(name):
+    """«название инст» з реєстру -> менеджер дашборда. None = не наш/нерозпізнаний."""
+    n = str(name or "").lower()
+    if not n:
+        return None
+    if n.startswith("@"):
+        return INST_MGR_PRAGUE if ("prague" in n or "praga" in n) else INST_MGR_PARIS
+    if "диан" in n:                   return "Диана"     # «Лиды Прага Дианы» — ДО перевірки «прага»
+    if "саида" in n:                  return "Саида"
+    if "таня" in n:                   return "Таня"
+    if "алиса" in n:                  return "Алиса"
+    if "максим" in n or "мага" in n:  return "Мага"      # кампанія «Лиды Париж Максим» веде Мага
+    if "яна" in n:                    return None        # Яна — менеджер іншого таргетолога
+    if "юлиана" in n or "барселона" in n: return "Юлиана"
+    if "прага" in n:                  return "Даша"      # «Лиды Прага» без імені = Даша
+    return None
+
+def fetch_admin_fact():
+    """Рядки таргетолога Ірини з реєстру адміністратора ->
+    {"monthly": {"YYYY-MM": {mgr: записів}}, "daily": {mgr: {"YYYY-MM-DD": записів}},
+     "unmapped": {назва: записів}} (нерозпізнані кампанії — щоб помітити нову)."""
+    rows = fetch_sheet_rows(gid=ADMIN_GID, ss=ADMIN_SS)
+    year = datetime.date.fromisoformat(TODAY).year   # дати в реєстрі без року (dd.mm)
+    monthly, daily, unmapped = {}, {}, {}
+    for r in rows:
+        if "ирин" not in str(r.get("таргетолог") or "").lower():
+            continue
+        m = re.match(r"(\d{1,2})\.(\d{1,2})$", str(r.get("дата") or "").strip())
+        if not m:
+            continue
+        try:
+            dt = datetime.date(year, int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            continue
+        tot = int(num(r.get("в_запись_всего")))
+        mgr = _admin_mgr(r.get("название_инст"))
+        if mgr is None:
+            if tot:
+                k = str(r.get("название_инст") or "?")
+                unmapped[k] = unmapped.get(k, 0) + tot
+            continue
+        mk, ds = dt.isoformat()[:7], dt.isoformat()
+        monthly.setdefault(mk, {})[mgr] = monthly.get(mk, {}).get(mgr, 0) + tot
+        daily.setdefault(mgr, {})[ds] = daily.get(mgr, {}).get(ds, 0) + tot
+    return {"monthly": monthly, "daily": daily, "unmapped": unmapped}
 
 # Нові менеджери: вузол у data.json створюється автоматично при першому запуску
 MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "2026-07-09"},
@@ -1151,21 +1203,20 @@ def main():
                      a["miss"], a["samples"][:3], a.get("pm_others", 0), a.get("others_bk", 0)))
         out["_diag"]["bookAudit"] = ba
 
-    # ПРОБА (04.08): реєстр АДМІНІСТРАТОРА — нова таблиця, Ірині щойно дали доступ.
-    # Дивимось структуру вкладки і чи є рядки таргетолога Ірини, щоб далі
-    # автоматично тягти «факт» записів замість ручного FACT_BOOKINGS.
-    ADMIN_SS  = "1-KjfT3Q8kc3UEijfynV1Ha5PGlXeLUL_Iu9IWS4iyLA"
-    ADMIN_GID = "1593394532"
+    # Реєстр АДМІНІСТРАТОРА (доступ з 04.08) — авто-«факт» записів замість ручних чисел.
+    # Рядки таргетолога Ірини по днях: «в запись всего» = записи менеджера за день.
     try:
-        _adm = fetch_sheet_rows(gid=ADMIN_GID, ss=ADMIN_SS)
-        _hdr = sorted({k for r in _adm[:80] for k in r.keys()})
-        _ir  = [r for r in _adm if "ирин" in str(r.get("таргетолог") or "").lower()]
-        out.setdefault("_diag", {})["adminSheet"] = {
-            "rows": len(_adm), "headers": _hdr[:30], "iryna_rows": len(_ir),
-            "sample": (_ir[-10:] if _ir else _adm[-6:])}
-        print("  адмін-реєстр: рядків %d | Ірини %d | колонок %d" % (len(_adm), len(_ir), len(_hdr)))
+        af = fetch_admin_fact()
+        fact = {mk: dict(v) for mk, v in af["monthly"].items()}
+        for mk, v in FACT_BOOKINGS.items():
+            fact.setdefault(mk, {}).update(v)      # ручні числа мають пріоритет (липень звірений)
+        out["factBookings"] = fact
+        out["factDaily"] = af["daily"]             # {mgr: {"YYYY-MM-DD": записів}} — для звірок
+        out.setdefault("_diag", {})["adminFact"] = {"monthly": af["monthly"], "unmapped": af["unmapped"]}
+        print("  адмін-факт: місяці %s | не розпізнані кампанії: %s"
+              % (sorted(af["monthly"].keys()), af["unmapped"] or "нема"))
     except Exception as e:
-        print("  адмін-реєстр FAIL ->", str(e)[:120])
+        print("  адмін-факт FAIL ->", str(e)[:120])
 
     def _merge_periods(field, fresh):
         """Свіжі періоди поверх старих: період, що не отримався, лишається зі
