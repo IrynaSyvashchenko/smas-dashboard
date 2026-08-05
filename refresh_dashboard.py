@@ -1016,6 +1016,7 @@ def main():
 
     lead_spend = {m: {} for m in cur["managers"]}
     lead_leads = {m: {} for m in cur["managers"]}
+    camp_days = {}   # кампанія -> {"m": менеджер, "days": {дата: [spend, leads]}} — для місячного звіту
     for r in rows:
         kind, m = classify(r.get("campaign"))
         if m is None or m not in cur["managers"]:
@@ -1024,6 +1025,10 @@ def main():
         sp = round(num(r.get("spend")), 4); ld = int(num(r.get("actions_lead")))
         lead_spend[m][d] = lead_spend[m].get(d, 0.0) + sp
         lead_leads[m][d] = lead_leads[m].get(d, 0) + ld
+        cn = str(r.get("campaign") or "")
+        if cn:
+            cd_ = camp_days.setdefault(cn, {"m": m, "days": {}}).setdefault("days", {}).setdefault(d, [0.0, 0])
+            cd_[0] += sp; cd_[1] += ld
 
     # ліди Instagram Direct — вручну від Ірини (Meta їх не бачить як lead-екшн)
     for m, days in INST_MANUAL.items():
@@ -1036,6 +1041,30 @@ def main():
     out["metaSource"] = META_SOURCE["used"]   # graph | windsor — видно в шапці сайту
     out["periodNote"] = "оновлюється кожні 2 год з 7:00 до 19:00 + о 22:00 за Прагою (вночі пауза)"
     out["factBookings"] = FACT_BOOKINGS   # факт адміністратора -> вкладка «<Місяць> (факт)»
+
+    # ---- Кампанійний зріз (для місячного звіту керівництву): дати запуску/зупинки,
+    # днів роботи, витрати/заявки по поточному й попередньому місяцях ----
+    _mp = TODAY[:7]
+    _pme2 = datetime.date.fromisoformat(TODAY).replace(day=1) - datetime.timedelta(days=1)
+    _pp = _pme2.isoformat()[:7]
+    _yst = (datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=1)).isoformat()
+    camps = []
+    for cn, c in camp_days.items():
+        ds = {d: v for d, v in c["days"].items() if v[0] > 0}
+        if not ds:
+            continue
+        alld = sorted(ds)
+        def _agg(pref, _ds=ds):
+            sp = round(sum(v[0] for d, v in _ds.items() if d.startswith(pref)), 2)
+            ld = sum(v[1] for d, v in _ds.items() if d.startswith(pref))
+            return {"spend": sp, "leads": ld, "days": sum(1 for d in _ds if d.startswith(pref)),
+                    "cpl": round(sp / ld, 2) if ld else None}
+        camps.append({"name": cn, "m": c["m"], "start": alld[0], "stop": alld[-1],
+                      "active": alld[-1] >= _yst,
+                      "month": _agg(_mp), "pmonth": _agg(_pp)})
+    camps.sort(key=lambda x: -(x["month"]["spend"] or x["pmonth"]["spend"] or 0))
+    out["campaigns"] = camps
+    print("кампанійний зріз: %d кампаній (%d активних)" % (len(camps), sum(1 for c in camps if c["active"])))
 
     # Meta-side per manager (bookings carried for now; refined below)
     for m, node in out["managers"].items():
@@ -1254,6 +1283,44 @@ def main():
         _merge_periods("adsets", build_adsets(PERIODS, yest_s, bk, raw_map, raw_ok))
     except Exception as e:
         print("adsets failed:", e)
+
+    # ---- Журнал вимкнень (_offLog): що зникло з активних + метрики й авто-причина
+    # на момент вимкнення. Для місячного звіту «що вимкнено і чому». ----
+    if META_TOKEN:
+        try:
+            curA  = {str(x["id"]): str(x.get("name") or "") for x in _graph_all("adsets", "id,name,effective_status") if x.get("effective_status") == "ACTIVE"}
+            curAd = {str(x["id"]): str(x.get("name") or "") for x in _graph_all("ads",    "id,name,effective_status") if x.get("effective_status") == "ACTIVE"}
+            prevS = cur.get("_activeSnap") or {}
+            offlog = list(cur.get("_offLog") or [])
+            def _reason(row, chk):
+                if not row: return ""
+                if row.get("freq") is not None and row["freq"] >= 2.5:
+                    return "частота %.1f — вигорів" % row["freq"]
+                if chk and row.get("cpa") is not None and row["cpa"] >= chk * 0.25:
+                    return "запис $%.0f — ≥25%% чека" % row["cpa"]
+                if (row.get("spend") or 0) >= 25 and not (row.get("book") or 0):
+                    return "$%.0f за 7 днів без записів" % row["spend"]
+                return ""
+            for typ, prev_map, cur_map, rows7, key in (
+                    ("адсет",   prevS.get("adsets") or {}, curA,  out.get("adsets", {}).get("d7") or [],    "adset"),
+                    ("креатив", prevS.get("ads")    or {}, curAd, out.get("creatives", {}).get("d7") or [], "name")):
+                for _id, nm in prev_map.items():
+                    if _id in cur_map or not nm:
+                        continue
+                    row = next((r for r in rows7 if r.get(key) == nm), None)
+                    chk = (check_usd_node(row["m"]) or {}).get("usd") if row and row.get("m") else None
+                    offlog.append({"date": TODAY, "type": typ, "name": nm,
+                                   "m": row.get("m") if row else None,
+                                   "spend7": row.get("spend") if row else None,
+                                   "cpa7": row.get("cpa") if row else None,
+                                   "freq7": row.get("freq") if row else None,
+                                   "book7": row.get("book") if row else None,
+                                   "reason": _reason(row, chk)})
+                    print("  ВИМКНЕНО %s: %s (%s)" % (typ, nm, (row or {}).get("m")))
+            out["_offLog"] = offlog[-200:]
+            out["_activeSnap"] = {"adsets": curA, "ads": curAd}
+        except Exception as e:
+            print("offLog failed ->", str(e)[:120])
 
     # бюджети + історія їх змін для блоку «Масштабування» (падає м'яко, старе лишається)
     try:
