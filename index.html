@@ -138,8 +138,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const pmEnd=new Date(monthPref+'-01T00:00:00Z'); pmEnd.setUTCDate(0);
   const pmPref=pmEnd.toISOString().slice(0,7), pmLast=pmEnd.toISOString().slice(0,10);
   const pmName=MONTHS[parseInt(pmPref.slice(5,7),10)-1];
-  // фактичні записи від адміністратора за попередній місяць -> окрема вкладка «<Місяць> (факт)»
-  const FB=(D.factBookings||{})[pmPref];
+  // щоденний ФАКТ адміністратора (реєстр): {менеджер: {дата: записів за день}}.
+  // Показується рядком на картках у КОЖНОМУ періоді — без окремих вкладок.
+  const FD=D.factDaily||null;
+  const factSum=(name,p)=>{const f=FD&&FD[name]; if(!f) return null;
+    let s=0; for(const dK in f){ if(p.pred(dK)) s+=f[dK]||0; } return s;};
 
   // ---- сьогодні: окрема чесна смужка (день ще неповний) ----
   const sumAll=(key,pred)=>Object.values(M).reduce((s,m)=>s+m.dates.reduce((a,d,i)=>a+(pred(d)?(m[key][i]||0):0),0),0);
@@ -174,11 +177,6 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
           pred:d=>d.startsWith(pmPref),
           bk:m=>m.bookingsPrevMonth??((m.bookingsDay||[]).reduce((s,v,i)=>s+((m.dates[i]||'').startsWith(pmPref)?(v||0):0),0)),
           extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(pmPref)).length}</b></div>`},
-    ...(FB?{pmfact:{label:pmName+' (факт)',qk:'pmonth',range:`${dd(pmPref+'-01')} – ${dd(pmLast)}`,
-          hint:`${pmName}: ЗАПИСИ — факт від адміністратора (всі записи менеджера, включно з нерекламними позначками). Витрати й заявки — з Meta.`,
-          pred:d=>d.startsWith(pmPref),
-          bk:(m,name)=>FB[name]??0,
-          extra:m=>`<div class="row"><span class="l">Джерело записів</span><b>адміністратор</b></div>`}}:{}),
     month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(today)}`,
           hint:`Поточний календарний місяць — те, що йде у звіт для керівництва.`,
           pred:d=>d.startsWith(monthPref), bk:m=>m.bookingsMonth??0,
@@ -196,7 +194,6 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const oldFmt=Array.isArray(D.adsets)||Array.isArray(D.creatives);
   const normP=x=>Array.isArray(x)?{yest:x,d7:x,month:x,all:x}:(x||{});
   const AS=normP(D.adsets), CR=normP(D.creatives);
-  if(FB){AS.pmfact=AS.pmonth||[];CR.pmfact=CR.pmonth||[];}   // вкладка «(факт)» у таблицях показує липневі дані
   const OLDFMT_NOTE='⚠️ Дані таблиці поки за останні 7 днів (старий формат) — перемикання періодів запрацює після наступного автооновлення. ';
 
   // ROAS = записи x середній чек / витрати. Оцінка: запис ще не оплачена процедура.
@@ -347,7 +344,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     document.getElementById('phint').textContent=p.hint;
     buildAlerts(k);
     el.innerHTML='';
-    let tSp=0,tLd=0,tBk=0,tRev=0,tRevSp=0;
+    let tSp=0,tLd=0,tBk=0,tFbk=0,tRev=0,tRevSp=0;
     const cards=[];
     // картки ВПОРЯДКОВАНІ по містах: Прага -> Париж -> Барселона; вимкнені (act===false) — в кінець
     const ordered=Object.keys(M).sort((a,b)=>{
@@ -363,6 +360,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       if(m.check&&sp){ tRev+=bk*m.check.usd; tRevSp+=sp; }
       const cpl=ld?sp/ld:null, cpa=bk?sp/bk:null, conv=ld?Math.round(bk/ld*1000)/10+'%':'—';
       const cCol=cpaColor(m.city,cpa);
+      const fbk=factSum(name,p);                 // факт адміна за цей період (null = нема реєстру)
+      if(fbk!=null){ tFbk+=fbk; }
+      const fCol=fbk?cpaColor(m.city,sp/fbk):'';
       const off=m.act===false; cards.push(`<div class="card"${off?' style="opacity:.55"':''}>
         <h3>${name} <span class="city">${m.city}</span>${off?' <span class="tag" style="background:var(--card2);color:var(--mut);border:1px solid var(--border)">вимкнена</span>':''}</h3>
         <div class="bigrow">
@@ -372,6 +372,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <div class="row"><span class="l">Витрати</span><b>${fmt(sp)}</b></div>
         <div class="row"><span class="l">Ліди</span><b>${ld}</b></div>
         <div class="row"><span class="l">Записи</span><b>${bk}</b></div>
+        ${fbk!=null?`<div class="row"><span class="l">Записи · факт адміна</span><b>${fbk}${fbk>bk?` <span class="tag y">+${fbk-bk} без позначки</span>`:''}</b></div>
+        <div class="row"><span class="l">CPA · факт</span><b${fCol?` style="color:${fCol}"`:''}>${fmt(fbk?sp/fbk:null)}</b></div>`:''}
         <div class="row"><span class="l">Конверсія в запис</span><b>${conv}</b></div>
         ${isInst(name)?'<div class="row"><span class="l">Канал</span><b>Instagram Direct</b></div>':''}
         ${roasRows(m,sp,bk)}
@@ -390,6 +392,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       <div class="row"><span class="l">Витрати</span><b>${fmt(tSp)}</b></div>
       <div class="row"><span class="l">Ліди</span><b>${tLd}</b></div>
       <div class="row"><span class="l">Записи</span><b>${tBk}</b></div>
+      ${FD?`<div class="row"><span class="l">Записи · факт адміна</span><b>${tFbk}${tFbk>tBk?` <span class="tag y">+${tFbk-tBk} без позначки</span>`:''}</b></div>
+      <div class="row"><span class="l">CPA · факт</span><b>${fmt(tFbk?tSp/tFbk:null)}</b></div>`:''}
       <div class="row"><span class="l">Конверсія в запис</span><b>${tLd?Math.round(tBk/tLd*1000)/10+'%':'—'}</b></div>
       ${tRoas!=null?`<div class="row"><span class="l">ROAS (оцінка)</span><b>${tRoas.toFixed(2)}</b></div>`:''}
     </div>`+cards.join(''));
@@ -605,6 +609,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль / випадковий) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не менеджера. '+
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
+    '<b>Записи · факт адміна</b> — з реєстру адміністратора: скільки записів РЕАЛЬНО зроблено за період (за датою запису, включно зі старими лідами). «Записи» вище — позначки в CRM-таблиці (за датою створення ліда). Жовте «+N без позначки» = записи, яких менеджер не позначив у таблиці. Факт за сьогодні/вчора може добігти пізніше — адмін заповнює реєстр наприкінці дня.<br>'+
     '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії; Прага: Диана = 2 999 Kč (акція для моделей з 18.07), Даша = 3 990 Kč.<br>'+
     'Алерти про ціну запису (💰) рахуються завжди за останні 7 днів і порівнюються з чеком міста (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
     '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta; ліди Парижа Meta рахує сама («ліди з листування»), записи Парижа і все по Празі Ірина вносить вручну.<br>'+
