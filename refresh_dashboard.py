@@ -1151,6 +1151,22 @@ def main():
                      a["miss"], a["samples"][:3], a.get("pm_others", 0), a.get("others_bk", 0)))
         out["_diag"]["bookAudit"] = ba
 
+    # ПРОБА (04.08): реєстр АДМІНІСТРАТОРА — нова таблиця, Ірині щойно дали доступ.
+    # Дивимось структуру вкладки і чи є рядки таргетолога Ірини, щоб далі
+    # автоматично тягти «факт» записів замість ручного FACT_BOOKINGS.
+    ADMIN_SS  = "1-KjfT3Q8kc3UEijfynV1Ha5PGlXeLUL_Iu9IWS4iyLA"
+    ADMIN_GID = "1593394532"
+    try:
+        _adm = fetch_sheet_rows(gid=ADMIN_GID, ss=ADMIN_SS)
+        _hdr = sorted({k for r in _adm[:80] for k in r.keys()})
+        _ir  = [r for r in _adm if "ирин" in str(r.get("таргетолог") or "").lower()]
+        out.setdefault("_diag", {})["adminSheet"] = {
+            "rows": len(_adm), "headers": _hdr[:30], "iryna_rows": len(_ir),
+            "sample": (_ir[-10:] if _ir else _adm[-6:])}
+        print("  адмін-реєстр: рядків %d | Ірини %d | колонок %d" % (len(_adm), len(_ir), len(_hdr)))
+    except Exception as e:
+        print("  адмін-реєстр FAIL ->", str(e)[:120])
+
     def _merge_periods(field, fresh):
         """Свіжі періоди поверх старих: період, що не отримався, лишається зі
         старими даними (той самий принцип «ніколи не зануляти на помилці»).
