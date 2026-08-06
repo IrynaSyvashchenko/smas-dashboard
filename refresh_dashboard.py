@@ -636,6 +636,7 @@ RAW_GID = {
 }
 # у частини рядків Meta не віддала назву оголошення через права доступу
 BROKEN_AD = "не хватает разрешений"
+RAW_STATS = {}   # {mgr: {"rows": N, "last_lead": "YYYY-MM-DD"}} — чи жива сира вкладка
 
 def period_metrics(periods):
     """periods = {key:(dfrom,dto)} -> {manager:{key:{ctr,cpm,freq,...}}}
@@ -666,10 +667,14 @@ def fetch_raw_map(barca_camps=frozenset()):
     на момент захоплення ліда; Ірина ад-сети перейменовує, тому join по назві
     втрачає ліди (перевірено: tochka15 — 62 ліди в Meta, 18 при join по назві)."""
     raw_map, raw_ok = {}, []
+    RAW_STATS.clear()   # діагностика: чи вкладка ЖИВА (наповнюється новими лідами)
     for mgr, gid in RAW_GID.items():
         try:
             n = 0
-            for r in fetch_sheet_rows(gid):
+            _rows_all = fetch_sheet_rows(gid)
+            _lastc = max((str(r.get("created_time") or "")[:10] for r in _rows_all), default="")
+            RAW_STATS[mgr] = {"rows": len(_rows_all), "last_lead": _lastc}
+            for r in _rows_all:
                 ph     = phone9(r.get("phone_number"))
                 ad_id  = _strip_id_prefix(r.get("ad_id"))
                 as_id  = _strip_id_prefix(r.get("adset_id"))
@@ -1219,7 +1224,9 @@ def main():
                          "d7_with_adset": b7_as, "d7_adset_same_m": b7_asm}
             print("  атрибуція %-6s: d7 booked %d | in_raw %d | adset %d | adset&same_m %d"
                   % (mgr, len(b7), b7_in, b7_as, b7_asm))
-        out["_diag"] = {"raw_ok": raw_ok, "attribution": diag}
+        out["_diag"] = {"raw_ok": raw_ok, "attribution": diag, "rawTabs": dict(RAW_STATS)}
+        for _m, _s in RAW_STATS.items():
+            print("  сира вкладка %-6s: рядків %d, останній лід %s" % (_m, _s["rows"], _s["last_lead"] or "?"))
         # аудит записів: по даті ЗАПИСУ vs по даті ЛІДА + пропущені формулювання позначок
         ba = {}
         for mgr, v in bk.items():
