@@ -304,8 +304,13 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     // тому адсет-CPA тепер надійна. Пороги від чека міста: ≥25% або ≥$25 без записів — критично,
     // ≥15% — попередження. Нові РК (<4 днів від старту) не судимо — записи ще доганяють ліди.
     const dlv=m=>{const s=M[m]?.start;return s?Math.floor((new Date(today)-new Date(s))/864e5)+1:99;};
+    // запобіжник: якщо на ад-сети менеджера «сіло» менше 60% його записів за 7 днів
+    // (сира вкладка відстає/завмерла) — адсет-CPA завищена, такі алерти пропускаємо
+    const asBk7=new Map();
+    for(const a of (AS.d7||[])){ if(isInst(a.m)) continue; asBk7.set(a.m,(asBk7.get(a.m)||0)+(a.book||0)); }
+    const unrel=m=>{const c=M[m]?.bookings7d||0; return c>=5&&(asBk7.get(m)||0)<c*0.6;};
     for(const a of (AS.d7||[])){
-      if(isInst(a.m)||a.act===false||deadAdsets.has(a.adset)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
+      if(isInst(a.m)||a.act===false||deadAdsets.has(a.adset)||unrel(a.m)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
       const chk=M[a.m]?.check?.usd;
       if(a.spend>=25&&a.book===0)
         A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> за ${per} і <b>0 записів</b> — ліди не конвертяться.`]);
