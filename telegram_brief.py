@@ -95,9 +95,18 @@ def build(d):
             dead.add(a["adset"])
             al.append("• %s (%s): $%.2f без лідів — глянь або вимкни" % (a["adset"], a["m"], a["spend"]))
     # CPA по АД-СЕТАХ за 7 днів (прив'язку записів до ад-сета полагоджено — див. refresh_dashboard).
+    # Запобіжник: якщо на ад-сети менеджера сіло <60% його записів за 7 днів
+    # (сира вкладка відстає) — адсет-CPA завищена, такі алерти не шлемо.
+    as_bk7 = {}
+    for a in (d.get("adsets", {}).get("d7") or []):
+        if not str(a["m"]).startswith("Инста"):
+            as_bk7[a["m"]] = as_bk7.get(a["m"], 0) + (a.get("book") or 0)
+    def _unrel(mm):
+        c = M.get(mm, {}).get("bookings7d") or 0
+        return c >= 5 and as_bk7.get(mm, 0) < c * 0.6
     for a in (d.get("adsets", {}).get("d7") or []):
         m = a["m"]
-        if str(m).startswith("Инста") or a.get("act") is False or a["adset"] in dead:
+        if str(m).startswith("Инста") or a.get("act") is False or a["adset"] in dead or _unrel(m):
             continue
         dl = days_live(m)
         if dl < 4:
