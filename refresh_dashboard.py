@@ -636,7 +636,11 @@ RAW_GID = {
 }
 # у частини рядків Meta не віддала назву оголошення через права доступу
 BROKEN_AD = "не хватает разрешений"
-RAW_STATS = {}   # {mgr: {"rows": N, "last_lead": "YYYY-MM-DD"}} — чи жива сира вкладка
+RAW_STATS = {}   # {вкладка: {"rows": N, "last_lead": "YYYY-MM-DD"}} — чи жива сира вкладка
+# Нові сирі вкладки (після зміни лід-форм експорт пише в НОВІ вкладки — 06.08 знайдено
+# fb6..fb9, "fb1,"). Менеджер визначається ПО РЯДКУ через classify(campaign_name),
+# тож майбутні нові вкладки досить дописати сюди за назвою.
+RAW_EXTRA = ["fb6", "fb7", "fb8", "fb9", "fb1,"]
 
 def period_metrics(periods):
     """periods = {key:(dfrom,dto)} -> {manager:{key:{ctr,cpm,freq,...}}}
@@ -666,33 +670,48 @@ def fetch_raw_map(barca_camps=frozenset()):
     ВАЖЛИВО: зв'язуємо по ID, а не по НАЗВІ. У сирій вкладці лежить назва ад-сета
     на момент захоплення ліда; Ірина ад-сети перейменовує, тому join по назві
     втрачає ліди (перевірено: tochka15 — 62 ліди в Meta, 18 при join по назві)."""
-    raw_map, raw_ok = {}, []
+    raw_map, got = {}, {}
     RAW_STATS.clear()   # діагностика: чи вкладка ЖИВА (наповнюється новими лідами)
+
+    def _ingest(rows_all, default_mgr, tabname):
+        """Рядки однієї вкладки -> raw_map. Менеджер рядка = classify(campaign_name)
+        (форми міняються, і той самий tab може містити кампанії різних менеджерів);
+        fallback — default_mgr вкладки (для рядків без розпізнаної кампанії)."""
+        n = 0
+        _lastc = max((str(r.get("created_time") or "")[:10] for r in rows_all), default="")
+        RAW_STATS[tabname] = {"rows": len(rows_all), "last_lead": _lastc}
+        for r in rows_all:
+            ph     = phone9(r.get("phone_number"))
+            ad_id  = _strip_id_prefix(r.get("ad_id"))
+            as_id  = _strip_id_prefix(r.get("adset_id"))
+            if BROKEN_AD in ad_id: ad_id = ""    # Meta не віддала ad_id через права
+            if BROKEN_AD in as_id: as_id = ""
+            # для АД-СЕТ-атрибуції досить adset_id — не викидаємо рядок лише через брак ad_id
+            if not ph or (not ad_id and not as_id):
+                continue
+            _k, _m = classify(r.get("campaign_name"))
+            mgr = _m or default_mgr
+            if not mgr:
+                continue
+            raw_map[ph] = {"m": mgr, "ad_id": ad_id, "adset_id": as_id,
+                           "ad":    str(r.get("ad_name") or ""),
+                           "adset": str(r.get("adset_name") or "")}
+            got[mgr] = got.get(mgr, 0) + 1
+            n += 1
+        print("  сира вкладка %-8s -> %d лідів з ID (останній %s)" % (tabname, n, _lastc or "?"))
+
     for mgr, gid in RAW_GID.items():
         try:
-            n = 0
-            _rows_all = fetch_sheet_rows(gid)
-            _lastc = max((str(r.get("created_time") or "")[:10] for r in _rows_all), default="")
-            RAW_STATS[mgr] = {"rows": len(_rows_all), "last_lead": _lastc}
-            for r in _rows_all:
-                ph     = phone9(r.get("phone_number"))
-                ad_id  = _strip_id_prefix(r.get("ad_id"))
-                as_id  = _strip_id_prefix(r.get("adset_id"))
-                if BROKEN_AD in ad_id: ad_id = ""    # Meta не віддала ad_id через права
-                if BROKEN_AD in as_id: as_id = ""
-                # для АД-СЕТ-атрибуції досить adset_id — не викидаємо рядок лише через брак ad_id
-                # (раніше вимагали ad_id, і записи з adset_id без ad_id губились)
-                if not ph or (not ad_id and not as_id):
-                    continue
-                raw_map[ph] = {"m": mgr, "ad_id": ad_id, "adset_id": as_id,
-                               "ad":    str(r.get("ad_name") or ""),
-                               "adset": str(r.get("adset_name") or "")}
-                n += 1
-            if n:
-                raw_ok.append(mgr)
-            print("  сира вкладка %-6s -> %d лідів з ID" % (mgr, n))
+            _ingest(fetch_sheet_rows(gid), mgr, mgr)
         except Exception as e:
             print("  сира вкладка НЕ прочиталась:", mgr, "->", str(e)[:90])
+    # нові вкладки (експорт після зміни форм) — менеджер лише з campaign_name
+    for name in RAW_EXTRA:
+        try:
+            _ingest(fetch_sheet_rows(sheet=name), None, name)
+        except Exception as e:
+            print("  дод. вкладка", name, "->", str(e)[:60])
+    raw_ok = [m for m, c in got.items() if c > 0]
     # Барселона (окрема таблиця, прив'язка тільки по кампаніях Ірини)
     try:
         n = 0
