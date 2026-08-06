@@ -243,7 +243,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   };
 
   // ---- Вердикти по креативах ----
-  // Доктрина: CPL/CTR/частоту судимо за 7 ДНІВ (швидкі сигнали, без лагу),
+  // Доктрина: CPL/CTR/частоту судимо за 7 ДНЯМИ (швидкі сигнали, без лагу),
   // CPA і записи — за МІСЯЦЬ (запис доганяє лід 1–5 днів, 7-денна CPA завжди занижує).
   const crKey=c=>c.m+'|'+c.name+'|'+c.adset;
   // CPA-зрілість = ПОТОЧНИЙ + ПОПЕРЕДНІЙ місяць разом: на початку місяця самого «month»
@@ -274,7 +274,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
      for(const c of list){ const sh=crShare(c); if(sh==null||sh<0.6) continue;
        const best=list.filter(x=>x!==c&&(x.book||0)>=3&&x.cpa!=null).sort((a,b)=>a.cpa-b.cpa)[0];
        if(best&&c.cpa!=null&&c.cpa>=best.cpa*1.3)
-         misTag.set(crKey(c),{share:sh,rival:best.name,mycpa:c.cpa,rcpa:best.cpa}); } } }
+         misTag.set(crKey(c),{share:sh,rival:best.name,mycpa:c.cpa,rcpa:best.cpa,
+                              rbook:best.book,mybook:c.book}); } } }
   const crVerdict=c=>{   // -> [текст, клас] ; null = не судимо (інста/вимкнений/нема даних записів
     if(isInst(c.m)||c.act===false) return null;
     const mo=crMo.get(crKey(c))||{}, c7=cr7.get(crKey(c))||{};
@@ -329,7 +330,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     }
     for(const [k3,t] of misTag){
       const [m3,n3,a3]=k3.split('|');
-      A.push(['warn',`⚠️ Meta ллє бюджет у слабший креатив: <b>${n3}</b> (${m3}) бере <b>${Math.round(t.share*100)}%</b> бюджету ад-сета «${a3}», але запис у нього <b>${fmt(t.mycpa)}</b> проти <b>${fmt(t.rcpa)}</b> у <b>${t.rival}</b> — перевір: можливо, вимкнути його, щоб бюджет пішов на кращий.`]);
+      A.push(['warn',`⚠️ Meta ллє бюджет у слабший креатив: <b>${n3}</b> (${m3}) бере <b>${Math.round(t.share*100)}%</b> бюджету ад-сета «${a3}» за 7 днів, але за ${pmName}+${monthName} його запис <b>${fmt(t.mycpa)}</b> (${t.mybook??0} зап.) проти <b>${fmt(t.rcpa)}</b> (${t.rbook??0} зап.) у <b>${t.rival}</b>, якому дістаються крихти. Перевір: якщо вимкнути «жадібний», бюджет перетече на кращий.`]);
     }
     A.sort((a,b)=>(a[0]==='bad'?0:1)-(b[0]==='bad'?0:1));   // спочатку критичні
     const el=document.getElementById('alerts');
