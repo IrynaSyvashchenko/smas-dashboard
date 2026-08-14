@@ -44,6 +44,8 @@ TZ        = datetime.timezone(datetime.timedelta(hours=2))
 
 LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Alissa",
            "Саида": "Saida", "Даша": "Dasha",
+           # Вика (Прага, з 12.08): РК «12_08_Prague_new», окрема таблиця «Прага Вика»
+           "Вика": ("Prague_new", "Viktoria"),
            # Мага ПЕРЕД Юліаною: її РК може містити "Barcelona"
            "Мага": ("Maga", "Мага"),
            "Юлиана": "Barcelona"}
@@ -127,6 +129,7 @@ def fetch_admin_fact():
 # Нові менеджери: вузол у data.json створюється автоматично при першому запуску
 MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "2026-07-09"},
                      "Мага":   {"city": "Париж", "start": "2026-07-18"},
+                     "Вика":   {"city": "Прага", "start": "2026-08-12"},
                      INST_MGR_PARIS:  {"city": "Париж", "start": "2026-06-20"},
                      INST_MGR_PRAGUE: {"city": "Прага", "start": "2026-06-20"}}
 
@@ -137,6 +140,7 @@ CZK_USD = 0.047
 AVG_CHECK = {   # (сума, валюта). Париж/Барселона — ціна оферу в кампанії; Прага — «модельна» ціна.
     # Диана: з 18.07 акція для моделей 2999 Kč (стара модельна 3990 лишилась у Даші/інсти).
     "Диана": (2999, "CZK"), "Даша": (3990, "CZK"),
+    "Вика":  (2999, "CZK"),   # Прага, форма «...Viktoria_model» = модельна акція
     "Таня": (199, "EUR"), "Алиса": (159, "EUR"), "Саида": (159, "EUR"),
     "Юлиана": (199, "EUR"),
     "Мага":   (199, "EUR"),   # Париж; припущення = офер 199€, поправ, якщо інший
@@ -157,9 +161,16 @@ def check_usd_node(m):
 SHEET_ID = "1sOFTQ3NTeEEFrDbUjdl3p7Jhlx-Fk7duQhk43Rikxx8"
 # Мага з 18.07 переїхала в головну таблицю: CRM-вкладка «Мага Ирина» (як у всіх),
 # сира вкладка fb5 (див. RAW_GID) — стара вкладка в барселонській таблиці видалена.
+# Значення: gid у головній таблиці АБО (ss, gid) — якщо менеджер в окремому файлі.
+VIKA_SS = "1Tpxch9P2Jadj_33cLLxCaRqfamW8W_TUWfw7MJdmrpk"   # «Прага Вика» (з 12.08)
 MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
                "Алиса": "36427361", "Саида": "2065248461", "Даша": "1406387900",
-               "Мага": "1445117368"}
+               "Мага": "1445117368",
+               "Вика": (VIKA_SS, "994125991")}
+
+def _sheet_args(v):
+    """gid або (ss, gid) -> kwargs для fetch_sheet_rows."""
+    return {"ss": v[0], "gid": v[1]} if isinstance(v, (tuple, list)) else {"gid": v}
 STATUS_FIELDS = ["первый_звонок", "первое_сообщение", "второй_звонок", "второе_сообщение",
                  "третий_звонок", "третье_сообщение", "третье_сообщение_",
                  "написал_на_whatsapp", "написал_на_whatsapp_1", "написал_на_whatsapp_2", "lead_status"]
@@ -315,9 +326,18 @@ def daterange(start, end):
     return out
 
 # ---------------- BOOKINGS (Google Sheet) ----------------
+def _book_date_cell(r):
+    """Значення колонки дати запису. Назва в різних таблицях різна:
+    «дата_и_время_записи», у Вики — «[merged]_дата_и_время_записи»."""
+    for k, v in r.items():
+        if "дата_и_время_записи" in str(k):
+            s = str(v or "").strip()
+            if s not in ("", "0", "-", "—", "None"):
+                return s
+    return ""
+
 def is_booked(r):
-    dz = str(r.get("дата_и_время_записи") or "").strip()
-    if dz not in ("", "0", "-", "—", "None"):
+    if _book_date_cell(r):
         return True
     for sf in STATUS_FIELDS:
         s = str(r.get(sf) or "").lower()
@@ -338,8 +358,8 @@ def is_booked(r):
 def _book_date(r):
     """Дата САМОГО ЗАПИСУ з «дата_и_время_записи» (для аудиту: адміністратор рахує
     записи по цій даті, а дашборд — по даті створення ліда). None = не розпарсилось."""
-    s = str(r.get("дата_и_время_записи") or "").strip()
-    if s in ("", "0", "-", "—", "None"):
+    s = _book_date_cell(r)
+    if not s:
         return None
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})", s)          # ISO 2026-07-29
     if m:
@@ -441,6 +461,10 @@ def fetch_sheet_rows(gid=None, ss=None, sheet=None):
         d = {}
         for i, h in enumerate(headers):
             if h and i < len(raw):
+                # дублікати заголовків (у Вики три колонки «написал на WhatsApp»):
+                # НЕ затираємо вже заповнене значення порожнім дублем
+                if h in d and str(raw[i] or "").strip() == "":
+                    continue
                 d[h] = raw[i]
         rows.append(d)
     _SHEET_CACHE[ck] = rows
@@ -605,7 +629,7 @@ def compute_bookings(barca_camps=frozenset()):
     res = {}
     for mgr, gid in MANAGER_GID.items():
         try:
-            rows = fetch_sheet_rows(gid)
+            rows = fetch_sheet_rows(**_sheet_args(gid))
         except Exception as e:
             print("  sheet FAIL", mgr, gid, "->", e); continue
         res[mgr] = _tally_manager(rows, today,
@@ -633,6 +657,7 @@ RAW_GID = {
     "Таня":  "651975206",    # fb3
     "Даша":  "871924069",    # fb4
     "Мага":  "978277453",    # fb5
+    "Вика":  (VIKA_SS, None),   # вкладка «Fb» в окремій таблиці (за назвою, не за gid)
 }
 # у частини рядків Meta не віддала назву оголошення через права доступу
 BROKEN_AD = "не хватает разрешений"
@@ -702,7 +727,8 @@ def fetch_raw_map(barca_camps=frozenset()):
 
     for mgr, gid in RAW_GID.items():
         try:
-            _ingest(fetch_sheet_rows(gid), mgr, mgr)
+            args = {"ss": gid[0], "sheet": "Fb"} if isinstance(gid, (tuple, list)) else {"gid": gid}
+            _ingest(fetch_sheet_rows(**args), mgr, mgr)
         except Exception as e:
             print("  сира вкладка НЕ прочиталась:", mgr, "->", str(e)[:90])
     # нові вкладки (експорт після зміни форм) — менеджер лише з campaign_name
