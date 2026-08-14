@@ -157,10 +157,15 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const remB=Object.entries(M).map(([n,m])=>({n,c:m.bookingsRemovedToday||0})).filter(x=>x.c>0).sort((a,b)=>b.c-a.c);
   const tR=remB.reduce((s,x)=>s+x.c,0);
   const remStr=tR?` · знято позначок за день: <b>−${tR}</b> (${remB.map(x=>`${x.n} ${x.c}`).join(' · ')})`:'';
+  // розбивка сьогоднішнього дня по менеджерах: ліди + скільки вже відкручено
+  const perT=Object.entries(M).map(([n,m])=>{const i=m.dates.indexOf(today);
+      return {n,l:i<0?0:(m.leads[i]||0),s:i<0?0:(m.spend[i]||0)};})
+    .filter(x=>x.l>0||x.s>0).sort((a,b)=>b.s-a.s);
+  const perTStr=perT.length?`<br>По менеджерах: ${perT.map(x=>`${x.n} <b>${x.l}</b> л · <b>${fmt(x.s,0)}</b>`).join(' · ')}`:'';
   document.getElementById('todayStrip').innerHTML=
     `⏳ <b>Сьогодні (${dd(today)}) — день ще неповний</b>, дані Meta і записи доходять із затримкою: `+
     `ліди <b>${tLeads}</b> · витрати <b>${fmt(tSpend)}</b> · нових записів сьогодні: ${bookStr}${remStr}. `+
-    `Для рішень дивись «Вчора» — це перший повний день.`;
+    `Для рішень дивись «Вчора» — це перший повний день.${perTStr}`;
 
   // ---- періоди ----
   const P={
@@ -243,7 +248,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   };
 
   // ---- Вердикти по креативах ----
-  // Доктрина: CPL/CTR/частоту судимо за 7 ДНІВ (швидкі сигнали, без лагу),
+  // Доктрина: CPL/CTR/частоту судимо за 7 ДНЯМИ (швидкі сигнали, без лагу),
   // CPA і записи — за МІСЯЦЬ (запис доганяє лід 1–5 днів, 7-денна CPA завжди занижує).
   const crKey=c=>c.m+'|'+c.name+'|'+c.adset;
   // CPA-зрілість = ПОТОЧНИЙ + ПОПЕРЕДНІЙ місяць разом: на початку місяця самого «month»
