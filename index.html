@@ -466,6 +466,14 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const asMiss=[...new Set(list.filter(a=>!a.q&&!isInst(a.m)).map(a=>a.m))];
     if(asMiss.length) notes.push(`* Якість і записи по ад-сетах поки недоступні для: ${asMiss.join(', ')} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
     if(list.some(a=>!isInst(a.m))) notes.push('Записи прив\'язуються до ад-сета по adset_id ліда (не по назві). Свіжі записи можуть доганяти з лагом 1–5 днів, тому за останні дні CPA ще може трохи мінятись. ');
+    // хто зараз без атрибуції: у менеджера є записи, але на ад-сети вони не сідають
+    // (сира вкладка з ad_id/adset_id застаріла — ліди пишуться в нову)
+    {const bad=[];
+     for(const [nm,mm] of Object.entries(M)){ if(isInst(nm)||mm.act===false) continue;
+       const c=mm.bookings7d||0; if(c<5) continue;
+       let s=0; for(const a of (AS.d7||[])) if(a.m===nm) s+=a.book||0;
+       if(s<c*0.6) bad.push(`${nm} (${s} з ${c})`); }
+     if(bad.length) notes.push(`⚠️ У цих менеджерів записи НЕ прив'язуються до ад-сетів: ${bad.join(', ')} — їхня «сира» вкладка з ad_id застаріла, ліди пишуться в нову. Числа на картках правильні, а розбивка по ад-сетах і CPA для них неповні (тому 💰-алерти для них вимкнено). Скажи Клоду — підключить нову вкладку. `);}
     if(list.some(a=>a.act===false)) notes.push('Сірі рядки з позначкою «вимкнений» — ад-сети, які вже не крутяться: показані для порівняння, в кінці. ');
     document.getElementById('asNote').textContent=notes.join('');
   }
