@@ -1,0 +1,45 @@
+name: Refresh vena dashboard (ad5)
+
+# Той самий графік, що й головний дашборд: кожні 2 години в GitHub cloud.
+on:
+  schedule:
+    - cron: "15 */2 * * *"     # зсув на :15, щоб не штовхатися з головним refresh
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vena-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Refresh vena/data.json
+        env:
+          META_TOKEN: ${{ secrets.META_TOKEN }}
+          SHEETS_URL: ${{ secrets.SHEETS_URL }}
+          SHEETS_KEY: ${{ secrets.SHEETS_KEY }}
+        run: python refresh_vena.py
+
+      - name: Commit if changed
+        run: |
+          if [ -n "$(git status --porcelain vena/data.json)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add vena/data.json
+            git commit -m "auto: vena data refresh $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          else
+            echo "vena/data.json unchanged"
+          fi
