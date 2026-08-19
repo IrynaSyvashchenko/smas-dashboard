@@ -210,9 +210,10 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     return `<div class="row"><span class="l">Дохід (${bk} × ${c.amount} ${CURSIGN[c.cur]||c.cur})</span><b>${fmt(rev)}</b></div>
             <div class="row"><span class="l">ROAS (оцінка)</span><b>${r.toFixed(2)}</b></div>`;
   };
-  // пороги CPA по напрямках: вініри Київ — чек $956, запис до $25 ок / до $40 терпимо;
-  // Відень/Тернопіль — [15,25] поки чек не уточнено
-  const cpaT=city=>city==='Київ'?[25,40]:[15,25];
+  // пороги CPA по напрямках (ключ = назва напрямку; fallback по місту):
+  // вініри — чек $956, запис до $25/40; Відень — чек 149€; СМАС Київ/Тернопіль — чек 2499 грн (~$60)
+  const CPA_T={'Стомат Київ':[25,40],'Відень':[15,25],'СМАС Київ':[10,18],'Тернопіль':[10,18]};
+  const cpaT=n=>CPA_T[n]||(n==='Київ'?[25,40]:[15,25]);
   const cpaColor=(city,v)=>{if(v==null)return '';const t=cpaT(city);
     return v<t[0]?'var(--good)':v<t[1]?'var(--warn)':'var(--bad)'};
 
@@ -289,7 +290,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     if((c7.freq!=null&&c7.freq>=2.2)||(c7.cpl!=null&&mo.cpl!=null&&(c7.leads||0)>=10&&c7.cpl>=mo.cpl*1.4)) return ['вигорає','y'];
     if(spMo<30&&(bkMo??0)<3) return ['тест',''];
     if(bkMo==null) return null;   // записи цього менеджера ще не читаються
-    if(mo.cpa!=null&&(bkMo||0)>=3&&mo.cpa<cpaT(M[c.m]?.city)[0]) return ['топ — тримай','g'];
+    if(mo.cpa!=null&&(bkMo||0)>=3&&mo.cpa<cpaT(c.m)[0]) return ['топ — тримай','g'];
     return ['норм',''];
   };
 
@@ -370,10 +371,10 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       tSp+=sp; tLd+=ld; tBk+=bk;
       if(m.check&&sp){ tRev+=bk*m.check.usd; tRevSp+=sp; }
       const cpl=ld?sp/ld:null, cpa=bk?sp/bk:null, conv=ld?Math.round(bk/ld*1000)/10+'%':'—';
-      const cCol=cpaColor(m.city,cpa);
+      const cCol=cpaColor(name,cpa);
       const fbk=factSum(name,p);                 // факт адміна за цей період (null = нема реєстру)
       if(fbk!=null){ tFbk+=fbk; }
-      const fCol=fbk?cpaColor(m.city,sp/fbk):'';
+      const fCol=fbk?cpaColor(name,sp/fbk):'';
       const off=m.act===false; cards.push(`<div class="card"${off?' style="opacity:.55"':''}>
         <h3>${name} <span class="city">${m.city}</span>${off?' <span class="tag" style="background:var(--card2);color:var(--mut);border:1px solid var(--border)">вимкнена</span>':''}</h3>
         <div class="bigrow">
@@ -515,7 +516,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       for(const c of [...rows].sort((x,y)=>((x.act===false)-(y.act===false))||((x.cpa??1e9)-(y.cpa??1e9)))){
         const ii=isInst(c.m), ia=(c.act===false);   // ia = вже не крутиться -> сірий рядок
         const noBk=(c.book==null);
-        const ct2=cpaT(M[c.m]?.city);               // пороги CPA міста цього менеджера
+        const ct2=cpaT(c.m);                        // пороги CPA цього напрямку
         const cls=noBk?'':(c.cpa==null?'r':(c.cpa<ct2[0]?'g':c.cpa<ct2[1]?'y':'r'));
         const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<ct2[0]?'топ':c.cpa<ct2[1]?'норма':'дорого'));
         const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
@@ -543,7 +544,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       notes.push(`* Записи/CPA по креативах ще недоступні для: ${miss} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
     }
     notes.push('ВЕРДИКТ судить креатив правильними періодами незалежно від обраної вкладки: CPL/CTR/частота — за 7 днів (швидкі сигнали), CPA і записи — за ПОТОЧНИЙ + ПОПЕРЕДНІЙ місяць (запис доганяє лід 1–5 днів, тому 7-денна CPA завжди виглядає гіршою, ніж є). «Тест» = ще мало даних (<$30 і <3 записів) — не суди і не вимикай. «% бюдж.·7д» = частка витрат свого ад-сета за 7 днів: видно, куди Meta ллє бюджет; «⚠️ бюджет не туди» = креатив їсть ≥60% бюджету, а запис у нього ≥30% дорожчий за сусіда. ');
-    notes.push('Пороги CPA: Київ (вініри, чек $956) — топ <$25, норма до $40; Відень/Тернопіль — топ <$15, норма до $25 (уточнимо, коли буде чек).');
+    notes.push('Пороги CPA: Стомат Київ (чек $956) — топ <$25, норма до $40; Відень (чек 149 €) — топ <$15, норма до $25; СМАС Київ і Тернопіль (чек 2 499 грн) — топ <$10, норма до $18.');
     document.getElementById('crNote').textContent=notes.join('');
   }
 
@@ -584,7 +585,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     scb.innerHTML='';
     for(const r of rows){
       const s=r.s; const rCity=M[s.m]?.city||'—'; if(rCity!==scCity){scCity=rCity; scb.insertAdjacentHTML('beforeend',cityRow(rCity,8));}
-      const mo=moMap.get(s.m+'|'+(s.campaign||'')+'|'+s.adset); const city=M[s.m]?.city, cc7=cpaColor(city,r.a?.cpa), ccM=cpaColor(city,mo?.cpa), grow=r.a?.cpl!=null&&mo?.cpl!=null&&r.a.cpl>=mo.cpl*1.3;
+      const mo=moMap.get(s.m+'|'+(s.campaign||'')+'|'+s.adset); const cc7=cpaColor(s.m,r.a?.cpa), ccM=cpaColor(s.m,mo?.cpa), grow=r.a?.cpl!=null&&mo?.cpl!=null&&r.a.cpl>=mo.cpl*1.3;
       const chg=s.chg?`${dd(s.chg.date)}${s.chg.time?` о ${s.chg.time}`:''}${s.chg.from!=null&&s.chg.to!=null?` · ${fmt(s.chg.from)} → ${fmt(s.chg.to)}`:''}`:(s.created?`не мінявся (з ${dd(s.created)})`:'—');
       scb.insertAdjacentHTML('beforeend',`<tr>
         <td>${s.adset}<br><span style="color:var(--mut);font-size:.72rem">${s.m} · ${s.campaign||''}</span></td>
@@ -628,7 +629,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / дубль / випадковий) → проблема <b>таргетингу</b>. '+
     '<b>Без реакції</b> (не прочитав, не взяв слухавку, ігнор) → людина лишила номер і зникла: проблема <b>креативу/оферу</b>, а не адміна. '+
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
-    '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена установка. Чек: Стомат Київ = 39 990 грн за 18 вінірів (~$956); Відень — чек не заданий, ROAS не показується.<br>'+
+    '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чеки: Стомат Київ = 39 990 грн за 18 вінірів (~$956); Відень = 149 €; СМАС Київ і Тернопіль = 2 499 грн (~$60).<br>'+
     'Алерти про ціну запису (💰) рахуються за останні 7 днів і порівнюються з чеком напрямку (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
     'Записи: вкладки «Стомат Ирина» і «Вена Ирина» таблиці «Лиды Анна Олеговна»; атрибуція до ад-сета/креативу — по телефону через сирі вкладки fbS/fbV. Ліди з <b>квіза</b> (viniry-kyiv.adsquiz.io) падають в ADS Quiz — щоб вони теж рахувались у записах, адмін має вносити їх у вкладку «Стомат Ирина».<br>'+
     'Дані: Meta Ads (Graph API) + Google-таблиця'
