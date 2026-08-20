@@ -20,7 +20,7 @@ Env vars (GitHub Actions secrets):
   SHEETS_KEY       -> shared secret checked by the bridge
 Reads/writes ./data.json.
 """
-import os, re, json, time, datetime, urllib.request, urllib.parse, urllib.error, sys
+import os, re, json, time, datetime, urllib.request, urllib.parse, urllib.error, sys, html
 
 API_KEY    = os.environ.get("WINDSOR_API_KEY", "").strip()
 def _clean_secret(name):
@@ -44,8 +44,10 @@ TZ        = datetime.timezone(datetime.timedelta(hours=2))
 
 LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Alissa",
            "Саида": "Saida", "Даша": "Dasha",
-           # Вика (Прага, з 12.08): РК «12_08_Prague_new», окрема таблиця «Прага Вика»
-           "Вика": ("Prague_new", "Viktoria"),
+           # Вика (Прага, з 12.08): РК «12_08_Prague_new» -> 17.08 перейменована в
+           # «12_08_Prague_Vika». Meta віддає ІСТОРІЮ під ПОТОЧНОЮ назвою, тому тримаємо
+           # обидві + ім'я — інакше при перейменуванні картка обнуляється.
+           "Вика": ("Prague_new", "Prague_Vika", "Viktoria", "Vika"),
            # Мага ПЕРЕД Юліаною: її РК може містити "Barcelona"
            "Мага": ("Maga", "Мага"),
            "Юлиана": "Barcelona"}
@@ -535,8 +537,13 @@ def _tally_manager(rows, today, phone_of, row_ok):
     #                 типу «записалась», яких «запись»-матчер не ловить) + приклади
     #   pm_others   = записи серед ЧУЖИХ лідів (інший таргетолог) з датою ліда в попер.
     #                 місяці — перевірка гіпотези «адміністратор рахує всіх, дашборд — Ірину»
+    #   empty_targ      = рядки з ПОРОЖНЬОЮ колонкою «таргетолог» (їх рахуємо як Ірини —
+    #                     див. _iryna_row); empty_targ_bk — скільки з них із записом.
+    #                     Якщо адмін каже менше записів, ніж дашборд, дивись сюди:
+    #                     ймовірно, це чужі ліди без підпису таргетолога.
     audit = {"pm_bd": 0, "m_bd": 0, "bd_none": 0, "miss": 0, "samples": [],
-             "pm_others": 0, "others_bk": 0}
+             "pm_others": 0, "others_bk": 0, "empty_targ": 0, "empty_targ_bk": 0,
+             "empty_targ_bk_today": 0}
 
     for k, r in seen.items():
         if not row_ok(r):
@@ -548,6 +555,13 @@ def _tally_manager(rows, today, phone_of, row_ok):
                 except Exception:
                     pass
             continue
+        # рядок без підпису таргетолога — рахується як наш; фіксуємо для звірки з адміном
+        if not str(r.get("таргетолог") or "").strip():
+            audit["empty_targ"] += 1
+            if is_booked(r):
+                audit["empty_targ_bk"] += 1
+                if str(r.get("created_time") or "")[:10] == today.isoformat():
+                    audit["empty_targ_bk_today"] += 1
         leads += 1
         ct = str(r.get("created_time") or "")[:10]
         try:
@@ -666,9 +680,37 @@ RAW_STATS = {}   # {вкладка: {"rows": N, "last_lead": "YYYY-MM-DD"}} — 
 # fb6..fb9, "fb1,"). Менеджер визначається ПО РЯДКУ через classify(campaign_name),
 # тож майбутні нові вкладки досить дописати сюди за назвою.
 RAW_EXTRA = ["fb6", "fb7", "fb8", "fb9", "fb1,",
+             # 20.08: знайдено ще чотири живі вкладки, яких не було в списку — через це
+             # у Алисы (fbb/afb) і Диани (dfb) записи не сідали на ад-сети тижнями.
+             "fbb", "afb", "dfb", "fbV", "fb4",
              # кандидати «на виріст»: при зміні форми експорт створює наступну вкладку.
              # Неіснуючі просто не прочитаються (м'яка помилка) — див. _diag.rawTabs.
              "fb10", "fb11", "fb12", "fb13", "fb14", "fb15", "fb2,", "fb3,"]
+# Вгадувати назви більше не треба: беремо список вкладок із самої таблиці. Пропускаємо
+# копії/бекапи — вони містять СТАРІ рядки з тими самими телефонами і перетерли б свіжу
+# прив'язку до ад-сета.
+RAW_SKIP_WORDS = ("copy", "recover", "backup", "бекап", "копия", "копія")
+# Автоберемо лише вкладки-ЕКСПОРТИ лід-форм: назва містить «fb» (fb2, fbb, afb, dfb,
+# fbV…) або починається з дати форми («28.04.26_leads_…»). CRM-вкладки менеджерів
+# («Саида Влад», «Прага Диана») читаються за gid і другий раз не потрібні.
+RAW_TAB_RE = re.compile(r"(fb|^\d\d[.\-_ ]\d\d[.\-_ ]\d\d)", re.I)
+SHEET_TABS = []   # діагностика: всі НЕприховані вкладки таблиці (_diag.sheetTabs)
+
+def list_tabs(ss=None):
+    """Назви всіх вкладок таблиці (сторінка htmlview, читається без токена).
+    Будь-який збій -> [] і працюємо далі за статичним RAW_EXTRA."""
+    ss = ss or SHEET_ID
+    try:
+        req = urllib.request.Request("https://docs.google.com/spreadsheets/d/%s/htmlview" % ss,
+                                     headers={"User-Agent": "Mozilla/5.0"})
+        page = urllib.request.urlopen(req, timeout=60).read().decode("utf-8", "ignore")
+    except Exception as e:
+        print("  список вкладок НЕ отримано ->", str(e)[:80]); return []
+    # htmlview будує меню з items.push({name: "...", ..., gid: "..."}) — беремо звідти.
+    # ВАЖЛИВО: приховані вкладки (fb6, fb2, fb3…) сюди не потрапляють, тому це
+    # ДОПОВНЕННЯ до RAW_EXTRA, а не заміна.
+    names = re.findall(r'\{name:\s*"([^"]{1,80})"[^}]*gid:\s*"\d+"', page)
+    return [html.unescape(n).strip() for n in names if n.strip()]
 
 def period_metrics(periods):
     """periods = {key:(dfrom,dto)} -> {manager:{key:{ctr,cpm,freq,...}}}
@@ -734,8 +776,17 @@ def fetch_raw_map(barca_camps=frozenset()):
             _ingest(fetch_sheet_rows(**args), mgr, mgr)
         except Exception as e:
             print("  сира вкладка НЕ прочиталась:", mgr, "->", str(e)[:90])
-    # нові вкладки (експорт після зміни форм) — менеджер лише з campaign_name
-    for name in RAW_EXTRA:
+    # нові вкладки (експорт після зміни форм) — менеджер лише з campaign_name.
+    # Список доповнюємо реальними вкладками таблиці, щоб чергова нова вкладка
+    # підхопилась сама, а не через місяць, коли CPA поїде.
+    extra = list(RAW_EXTRA)
+    SHEET_TABS[:] = list_tabs()
+    for t in SHEET_TABS:
+        if t in extra or any(w in t.lower() for w in RAW_SKIP_WORDS):
+            continue
+        if RAW_TAB_RE.search(t):
+            extra.append(t)
+    for name in extra:
         try:
             _ingest(fetch_sheet_rows(sheet=name), None, name)
         except Exception as e:
@@ -1272,7 +1323,8 @@ def main():
                          "d7_with_adset": b7_as, "d7_adset_same_m": b7_asm}
             print("  атрибуція %-6s: d7 booked %d | in_raw %d | adset %d | adset&same_m %d"
                   % (mgr, len(b7), b7_in, b7_as, b7_asm))
-        out["_diag"] = {"raw_ok": raw_ok, "attribution": diag, "rawTabs": dict(RAW_STATS)}
+        out["_diag"] = {"raw_ok": raw_ok, "attribution": diag, "rawTabs": dict(RAW_STATS),
+                        "sheetTabs": list(SHEET_TABS)}
         for _m, _s in RAW_STATS.items():
             print("  сира вкладка %-6s: рядків %d, останній лід %s" % (_m, _s["rows"], _s["last_lead"] or "?"))
         # аудит записів: по даті ЗАПИСУ vs по даті ЛІДА + пропущені формулювання позначок

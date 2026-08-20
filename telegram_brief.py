@@ -67,7 +67,9 @@ def build(d):
         else:
             bk = n.get("bookingsYest")
         bk = bk or 0
-        if sp <= 0 and ld <= 0:
+        # показуємо менеджера, якщо є витрати, ліди АБО записи — інакше той, у кого
+        # день без відкрутки (пауза/перейменована РК), випадав би зі звіту зовсім
+        if sp <= 0 and ld <= 0 and not bk:
             continue
         tsp += sp; tld += ld; tbk += bk
         rows.append((m, sp, ld, bk))
