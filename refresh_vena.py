@@ -25,7 +25,9 @@ SHEETS_URL = _clean_secret("SHEETS_URL")
 if SHEETS_URL.endswith("/exec/"):
     SHEETS_URL = SHEETS_URL[:-1]
 SHEETS_KEY = _clean_secret("SHEETS_KEY")
-META_TOKEN = _clean_secret("META_TOKEN")
+# Кабінет ad5 бачить профіль Ірини -> окремий токен META_TOKEN_VENA.
+# Fallback на META_TOKEN (Анатолій) — на майбутнє, коли буде один спільний токен.
+META_TOKEN = _clean_secret("META_TOKEN_VENA") or _clean_secret("META_TOKEN")
 GRAPH_API  = "https://graph.facebook.com/v21.0"
 ACCOUNT    = "1483053046124984"          # кабінет ad5 (Анна Олеговна)
 DATE_FROM  = "2026-08-15"                # старт Ірини в цьому кабінеті
@@ -48,7 +50,10 @@ CITY_OF = {"Стомат Київ": "Київ", "Відень": "Відень",
 SHEET_ID = "1RdXP96bS0e6UPnPrkql4z4n21cNV7FbMuk6fdWYHnPA"
 # CRM-вкладки (статуси адміна) і сирі вкладки (атрибуція лід -> ad_id) по напрямках.
 # Нові напрямки (СМАС Київ / Тернопіль): допиши сюди назви вкладок, коли з'являться.
-MANAGER_SHEET = {"Стомат Київ": "Стомат Ирина", "Відень": "Вена Ирина"}
+MANAGER_SHEET = {"Стомат Київ": ["Стомат Ирина", "Квіз Ирина"],
+                 "Відень":      ["Вена Ирина"],
+                 "СМАС Київ":   ["Smas Киев"],
+                 "Тернопіль":   ["Smas Тернополь"]}
 RAW_SHEETS    = ["fbS", "fbV",
                  # кандидати «на виріст» — неіснуючі просто не прочитаються (м'яко)
                  "fbS2", "fbV2", "fbT", "fbK", "fb1", "fb2"]
@@ -371,11 +376,15 @@ def _tally_manager(rows, today, raw_idx):
 def compute_bookings(raw_idx):
     today = datetime.date.fromisoformat(TODAY)
     res = {}
-    for mgr, sheet in MANAGER_SHEET.items():
-        try:
-            rows = fetch_sheet_rows(sheet)
-        except Exception as e:
-            print("  CRM-вкладка FAIL", mgr, "->", e); continue
+    for mgr, sheets in MANAGER_SHEET.items():
+        rows = []
+        for sheet in ([sheets] if isinstance(sheets, str) else sheets):
+            try:
+                rows += fetch_sheet_rows(sheet)
+            except Exception as e:
+                print("  CRM-вкладка FAIL", mgr, sheet, "->", str(e)[:80])
+        if not rows:
+            continue
         res[mgr] = _tally_manager(rows, today, raw_idx)
         v = res[mgr]
         print("  CRM %-12s лідів(з 15.08) %-4d | записів %-3d 7д %-3d вчора %d"
