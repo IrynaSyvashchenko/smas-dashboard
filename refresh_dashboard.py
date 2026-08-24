@@ -196,7 +196,40 @@ def graph_rows(fields, dfrom, dto):
     """Meta Marketing API insights -> рядки У ФОРМАТІ WINDSOR (ті самі ключі),
     щоб решта коду не змінювалась. level виводиться з полів; 'date' у полях =
     розбивка по днях (time_increment=1). БЕЗ 'date' — суми за період, тоді
-    reach/frequency коректні (грабля: частоту не можна сумувати по днях)."""
+    reach/frequency коректні (грабля: частоту не можна сумувати по днях).
+
+    Денний зріз ріжеться на вікна: 24.08.2026 запит за 66 днів з time_increment=1
+    почав стабільно вертати HTTP 500 code 1 / subcode 99 («забагато даних»), скрипт
+    відкочувався на Windsor, а там від'єднаний FB-акаунт -> усі витрати ставали 0."""
+    if "date" in fields:
+        return _graph_daily_chunked(fields, dfrom, dto)
+    return _graph_once(fields, dfrom, dto)
+
+def _graph_daily_chunked(fields, dfrom, dto, span=14):
+    """Денний зріз вікнами по span днів; вікно, що впало на «забагато даних»,
+    ріжеться навпіл (до одного дня). Так довжина історії більше не впирається в ліміт."""
+    d1 = datetime.date.fromisoformat(dfrom); d2 = datetime.date.fromisoformat(dto)
+    out, win = [], []
+    cur = d1
+    while cur <= d2:
+        end = min(cur + datetime.timedelta(days=span - 1), d2)
+        win.append((cur, end)); cur = end + datetime.timedelta(days=1)
+    for a, b in win:
+        out += _graph_split(fields, a, b)
+    return out
+
+def _graph_split(fields, a, b):
+    """Одне вікно; при «забагато даних» ділимо навпіл, поки не пройде."""
+    try:
+        return _graph_once(fields, a.isoformat(), b.isoformat())
+    except RuntimeError as e:
+        if "HTTP 500" not in str(e) or a == b:
+            raise
+        mid = a + (b - a) // 2
+        print("  graph: вікно %s..%s завелике, ділю навпіл" % (a, b))
+        return _graph_split(fields, a, mid) + _graph_split(fields, mid + datetime.timedelta(days=1), b)
+
+def _graph_once(fields, dfrom, dto):
     level = "ad" if "ad_id" in fields else ("adset" if "adset_id" in fields else "campaign")
     daily = "date" in fields
     api_fields = ["campaign_name", "spend", "impressions", "clicks", "reach", "actions"]
@@ -1139,6 +1172,27 @@ def main():
         if m in lead_leads:
             for d, v in days.items():
                 lead_leads[m][d] = lead_leads[m].get(d, 0) + int(v.get("l", 0))
+
+    # ЗАПОБІЖНИК: якщо Meta не віддала ЖОДНИХ витрат (22–24.08.2026: graph впав на
+    # «забагато даних», а у Windsor від'єднаний FB-акаунт) — не затираємо історію
+    # нулями, а лишаємо денні ряди зі старого data.json. Записи/ад-сети/креативи
+    # оновлюються як завжди; у шапці сайту джерело буде позначене «-stale».
+    if not any(v for days in lead_spend.values() for v in days.values()):
+        kept = 0
+        for m, n in cur["managers"].items():
+            ds = n.get("dates") or []; sp = n.get("spend") or []; ld = n.get("leads") or []
+            for i, d in enumerate(ds):
+                s_ = sp[i] if i < len(sp) else 0
+                l_ = ld[i] if i < len(ld) else 0
+                if s_ or l_:
+                    lead_spend.setdefault(m, {})[d] = s_
+                    lead_leads.setdefault(m, {})[d] = l_
+                    kept += 1
+        if kept:
+            print("!!! Meta не віддала витрат — денні ряди взято зі старого data.json (%d днів)" % kept)
+            META_SOURCE["used"] += "-stale"
+        else:
+            print("!!! Meta не віддала витрат і в старому data.json їх теж немає")
 
     out = json.loads(json.dumps(cur))
     out["updated"] = datetime.datetime.now(TZ).replace(microsecond=0).isoformat()
