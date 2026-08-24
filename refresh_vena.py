@@ -311,6 +311,29 @@ def fetch_raw_index():
             n += 1
         stats[name] = {"rows": n, "last_lead": last}
         print("  сира вкладка %-6s -> %d лідів (останній %s)" % (name, n, last or "?"))
+    # Квіз-ліди (вебхук ADSQuiz -> лист «Квіз Ирина»): ad_id немає, атрибуція по
+    # НАЗВАХ з UTM (utm_term = ад-сет, utm_content = оголошення). build_adsets/
+    # build_creatives підставлять id по назві з інсайтів Meta.
+    try:
+        rows = fetch_sheet_rows("Квіз Ирина")
+        n = 0; last = ""
+        for r in rows:
+            ph = phone9(_phone_of(r))
+            if not ph:
+                continue
+            ct = str(r.get("created_time") or "")[:10]
+            if ct and ct > last:
+                last = ct
+            cur = idx.get(ph)
+            if cur is None or (ct and ct > cur.get("ct", "")):
+                idx[ph] = {"m": "Стомат Київ", "ct": ct, "ad_id": "", "adset_id": "",
+                           "ad": str(r.get("utm_content") or ""),
+                           "adset": str(r.get("utm_term") or ""), "quiz": True}
+            n += 1
+        stats["Квіз Ирина"] = {"rows": n, "last_lead": last}
+        print("  квіз-вкладка       -> %d лідів (останній %s)" % (n, last or "?"))
+    except Exception as e:
+        print("  квіз-вкладка ->", str(e)[:60])
     return idx, stats
 
 def _tally_manager(rows, today, raw_idx):
@@ -420,15 +443,22 @@ def build_adsets(periods, bk, raw_map):
             a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
             a["imp"] += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
             a["reach"] += num(r.get("reach"))
+        # квіз-ліди без adset_id: садимо на єдиний квіз-адсет (по «quiz» у назві)
+        quiz_aids = [a_id for a_id, a_ in agg.items()
+                     if "quiz" in str(a_.get("adset") or "").lower()]
+        quiz_aid = quiz_aids[0] if len(quiz_aids) == 1 else None
         qmap = {}
         for mgr in (bk or {}):
             for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
                 if not _in_period(L["cd"], dfrom, dto):
                     continue
                 hit = raw_map.get(L["ph"])
-                if not hit or not hit["adset_id"]:
+                if not hit:
                     continue
-                q = qmap.setdefault(hit["adset_id"], {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
+                aid_h = hit["adset_id"] or (quiz_aid if hit.get("quiz") else "")
+                if not aid_h:
+                    continue
+                q = qmap.setdefault(aid_h, {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
                 q["leads"] += 1
                 if L["bad"]: q["bad"] += 1
                 if L["nr"]:  q["noresp"] += 1
@@ -476,14 +506,24 @@ def build_creatives(periods, bk, raw_map):
             a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
             a["imp"] += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
             a["reach"] += num(r.get("reach"))
+        # квіз-ліди: підбираємо оголошення по «quiz» у назві + збігу utm_content
+        def _quiz_ad(hit):
+            want = str(hit.get("ad") or "").lower()
+            cands = [a_id for a_id, a_ in agg.items()
+                     if "quiz" in str(a_.get("ad") or "").lower()
+                     and (not want or want in str(a_.get("ad") or "").lower())]
+            return cands[0] if len(cands) == 1 else None
         bmap = {}
         for mgr in (bk or {}):
             for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
                 if not L["bk"] or not _in_period(L["cd"], dfrom, dto):
                     continue
                 hit = raw_map.get(L["ph"])
-                if hit and hit["ad_id"]:
-                    bmap[hit["ad_id"]] = bmap.get(hit["ad_id"], 0) + 1
+                if not hit:
+                    continue
+                aid_h = hit["ad_id"] or (_quiz_ad(hit) if hit.get("quiz") else None)
+                if aid_h:
+                    bmap[aid_h] = bmap.get(aid_h, 0) + 1
         res = []
         for aid, a in agg.items():
             sp = round(a["spend"], 2); ld = a["leads"]
@@ -716,7 +756,8 @@ def main():
         except Exception as e:
             print("period metrics failed:", e)
 
-        raw_map = {ph: h for ph, h in raw_idx.items() if h.get("ad_id") or h.get("adset_id")}
+        raw_map = {ph: h for ph, h in raw_idx.items()
+                   if h.get("ad_id") or h.get("adset_id") or h.get("quiz")}
 
         def _merge_periods(field, fresh):
             if not fresh:
