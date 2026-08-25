@@ -8,7 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='64' y2='64'%3E%3Cstop offset='0' stop-color='%234f8cff'/%3E%3Cstop offset='1' stop-color='%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Crect x='12' y='34' width='9' height='18' rx='2.5' fill='%23fff' opacity='.7'/%3E%3Crect x='27' y='24' width='9' height='28' rx='2.5' fill='%23fff' opacity='.85'/%3E%3Crect x='42' y='13' width='9' height='39' rx='2.5' fill='%23fff'/%3E%3C/svg%3E">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
-:root{--bg:#0f1420;--card:#1a2130;--card2:#212a3d;--txt:#e8ecf4;--mut:#8b96ab;--acc:#4f8cff;--good:#3ecf8e;--warn:#f5b942;--bad:#ff6b6b;--border:#2a3550}
+:root{--bg:#0f1420;--card:#1a2130;--card2:#212a3d;--txt:#e8ecf4;--mut:#8b96ab;--acc:#4f8cff;--good:#3ecf8e;--warn:#f5b942;--bad:#ff6b6b;--border:#2a3550;--offer:#c99bff}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans-serif;padding:20px;max-width:1200px;margin:0 auto}
 h1{font-size:1.5rem;margin-bottom:4px}
@@ -42,6 +42,12 @@ tr.grp .gcity{color:var(--mut);font-weight:400}
 tr.grp .gsum{float:right;color:var(--mut);font-weight:400;font-size:.75rem}
 tr.grp:hover td{background:var(--card2)}
 tr.inact td{opacity:.45}
+/* ад-сет з ІНШИМ оффером (напр. 149 € на Париж при базовому 159/199) — щоб не
+   плутати його цифри з основною пропозицією менеджера */
+tr.offer td{background:#241d33}
+tr.offer:hover td{background:#2c2340}
+tr.offer td:first-child{box-shadow:inset 3px 0 0 var(--offer)}
+.oftag{background:var(--offer);color:#1a1024;font-weight:700;font-size:.68rem;padding:1px 6px;border-radius:8px;margin-left:6px;white-space:nowrap}
 .row{display:flex;justify-content:space-between;font-size:.82rem;padding:3px 0;border-bottom:1px dashed var(--border)}
 .row:last-child{border:none}
 .row .l{color:var(--mut)}
@@ -433,6 +439,16 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // ---- ад-сети (по періодах) ----
   const asb=document.querySelector('#asTable tbody');
   const pct=(n,d)=>d?Math.round(n/d*100):null;
+  // Оффер ад-сета з його назви: «..._149е_...», «159е», «199 e». Порівнюємо з базовим
+  // чеком менеджера — якщо не збігається, це тест іншої пропозиції, і його цифри
+  // не можна читати поруч з рештою як однакові (інша ціна = інша цільова CPA).
+  const offerOf=n=>{const m=String(n||'').match(/(\d{3})\s*[еe€]/i);return m?+m[1]:null;};
+  const baseOffer=mgr=>M[mgr]?.check?.amount??null;
+  function offerInfo(a){
+    const o=offerOf(a.adset), b=baseOffer(a.m);
+    return (o&&b&&o!==b)?{o,b}:null;
+  }
+
   function renderAdsets(k){
     const p=P[k], list=AS[k]||[];
     document.getElementById('asTitle').textContent=`Ад-сети (аудиторія · гео) — ${p.label} · ${p.range}`;
@@ -448,8 +464,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         const bR=q?pct(q.bad,q.leads):null, nR=q?pct(q.noresp,q.leads):null;
         const bcls=bR==null?'':(bR>=20?'r':bR>=10?'y':'g');
         const ncls=nR==null?'':(nR>=40?'r':nR>=25?'y':'g');
-        asb.insertAdjacentHTML('beforeend',`<tr${ia?' class="inact"':''}>
-          <td>${a.adset}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
+        const of=offerInfo(a);
+        asb.insertAdjacentHTML('beforeend',`<tr class="${ia?'inact ':''}${of?'offer':''}">
+          <td>${a.adset}${of?`<span class="oftag" title="Інший оффер: ${of.o} € замість ${of.b} €">${of.o} €</span>`:''}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
           <td>${fmt(a.spend)}</td><td>${ii?'—':a.leads}</td><td>${ii?'—':fmt(a.cpl)}</td>
           <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
           <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
@@ -462,6 +479,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const notes=[];
     if(oldFmt) notes.push(OLDFMT_NOTE);
     if(!list.length) notes.push('Немає даних за цей період. ');
+    // легенда до підсвітки: показуємо лише коли такі ад-сети реально є в періоді
+    const ofs=[...new Set(list.map(a=>offerInfo(a)?.o).filter(Boolean))].sort();
+    if(ofs.length) notes.push(`Фіолетовим виділено ад-сети з ІНШИМ оффером (${ofs.join(' €, ')} €) — у них інша ціна, тому CPL і CPA не порівнюються напряму з рештою рядків менеджера. `);
     if(list.some(a=>isInst(a.m))) notes.push('Инста-кампанії: ліди йдуть у Direct, тому тут лише витрати/CTR/частота (ліди й записи — на картці «Инста…»). ');
     const asMiss=[...new Set(list.filter(a=>!a.q&&!isInst(a.m)).map(a=>a.m))];
     if(asMiss.length) notes.push(`* Якість і записи по ад-сетах поки недоступні для: ${asMiss.join(', ')} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
