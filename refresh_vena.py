@@ -43,7 +43,7 @@ LEAD_KW = {
     "Тернопіль":   ("ternopil", "тернопіл"),
     "СМАС Київ":   ("smas", "смас"),
 }
-CITY_OF = {"Стомат Київ": "Київ", "Відень": "Відень",
+CITY_OF = {"Стомат Київ": "Київ", "Стомат Квіз": "Київ", "Відень": "Відень",
            "Тернопіль": "Тернопіль", "СМАС Київ": "Київ"}
 
 # ---- Google-таблиця «Лиды Анна Олеговна» ----------------------------------
@@ -52,7 +52,8 @@ SHEET_ID = "1RdXP96bS0e6UPnPrkql4z4n21cNV7FbMuk6fdWYHnPA"
 # Нові напрямки (СМАС Київ / Тернопіль): допиши сюди назви вкладок, коли з'являться.
 # «Стомат Квиз Ирина» — вкладка адмінів зі статусами квіз-лідів (телефони/дати
 # тягнуться ARRAYFORMULA з сирої «Квіз Ирина»; саму сиру НЕ читаємо, щоб не задвоїти).
-MANAGER_SHEET = {"Стомат Київ": ["Стомат Ирина", "Стомат Квиз Ирина"],
+MANAGER_SHEET = {"Стомат Київ": ["Стомат Ирина"],
+                 "Стомат Квіз": ["Стомат Квиз Ирина"],
                  "Відень":      ["Вена Ирина"],
                  "СМАС Київ":   ["Smas Киев"],
                  "Тернопіль":   ["Smas Тернополь"]}
@@ -64,6 +65,7 @@ RAW_SHEETS    = ["fbS", "fbV",
 UAH_USD = 0.0239   # ~41.8 грн/$
 EUR_USD = 1.17
 AVG_CHECK = {"Стомат Київ": (39990, "UAH"),
+             "Стомат Квіз": (39990, "UAH"),
              "Відень":      (149,   "EUR"),
              "СМАС Київ":   (2499,  "UAH"),
              "Тернопіль":   (2499,  "UAH")}
@@ -172,10 +174,23 @@ def classify(campaign):
             return ("lead", m)
     return (None, None)
 
+def _is_quiz_adset(adset):
+    a = str(adset or "").lower()
+    return "quiz" in a or "квіз" in a or "квиз" in a
+
+def classify_row(campaign, adset=None):
+    """Квіз — окрема картка: адсет із «quiz» у назві йде в «Стомат Квіз»,
+    решта — по назві кампанії, як раніше."""
+    if _is_quiz_adset(adset):
+        return ("lead", "Стомат Квіз")
+    return classify(campaign)
+
 def fetch_meta():
     """Денні spend/leads по кампаніях. None = Meta недоступна (старі дані лишаються)."""
     try:
-        rows = graph_rows(["date", "campaign", "spend", "actions_lead"], DATE_FROM, TODAY)
+        # рівень adset, щоб квіз-адсет виділявся в окрему картку «Стомат Квіз»
+        rows = graph_rows(["date", "campaign", "adset_id", "adset_name",
+                           "spend", "actions_lead"], DATE_FROM, TODAY)
         print("meta: GRAPH API | rows:", len(rows))
         return rows
     except Exception as e:
@@ -326,7 +341,7 @@ def fetch_raw_index():
                 last = ct
             cur = idx.get(ph)
             if cur is None or (ct and ct > cur.get("ct", "")):
-                idx[ph] = {"m": "Стомат Київ", "ct": ct, "ad_id": "", "adset_id": "",
+                idx[ph] = {"m": "Стомат Квіз", "ct": ct, "ad_id": "", "adset_id": "",
                            "ad": str(r.get("utm_content") or ""),
                            "adset": str(r.get("utm_term") or ""), "quiz": True}
             n += 1
@@ -432,7 +447,7 @@ def build_adsets(periods, bk, raw_map):
             print("  ад-сети period FAIL", key, "->", e); continue
         agg = {}
         for r in rows:
-            kind, m = classify(r.get("campaign"))
+            kind, m = classify_row(r.get("campaign"), r.get("adset_name"))
             if m is None: continue
             aid = str(r.get("adset_id") or "")
             if not aid: continue
@@ -493,7 +508,7 @@ def build_creatives(periods, bk, raw_map):
             print("  creatives period FAIL", key, "->", e); continue
         agg = {}
         for r in ads:
-            kind, m = classify(r.get("campaign"))
+            kind, m = classify_row(r.get("campaign"), r.get("adset_name"))
             if m is None: continue
             aid = str(r.get("ad_id") or "")
             if not aid: continue
@@ -593,7 +608,7 @@ def fetch_scaling():
         if a.get("effective_status") != "ACTIVE":
             continue
         camp = a.get("campaign") or {}
-        kind, m = classify(camp.get("name"))
+        kind, m = classify_row(camp.get("name"), a.get("name"))
         if m is None:
             continue
         b = a.get("daily_budget"); lvl = "adset"; evt_id = str(a.get("id"))
@@ -622,7 +637,7 @@ def main():
     # вузли напрямків: створюємо, коли напрямок з'явився в кампаніях кабінету
     seen_dirs = set()
     for r in (rows or []):
-        kind, m = classify(r.get("campaign"))
+        kind, m = classify_row(r.get("campaign"), r.get("adset_name"))
         if m: seen_dirs.add(m)
     for m in seen_dirs:
         if m not in cur["managers"]:
@@ -639,7 +654,7 @@ def main():
         lead_leads = {m: {} for m in out["managers"]}
         camp_days = {}
         for r in rows:
-            kind, m = classify(r.get("campaign"))
+            kind, m = classify_row(r.get("campaign"), r.get("adset_name"))
             if m is None or m not in out["managers"]:
                 continue
             d = str(r.get("date"))[:10]
@@ -647,6 +662,8 @@ def main():
             lead_spend[m][d] = lead_spend[m].get(d, 0.0) + sp
             lead_leads[m][d] = lead_leads[m].get(d, 0) + ld
             cn = str(r.get("campaign") or "")
+            if cn and m == "Стомат Квіз":
+                cn += " · квіз"
             if cn:
                 cd_ = camp_days.setdefault(cn, {"m": m, "days": {}})["days"].setdefault(d, [0.0, 0])
                 cd_[0] += sp; cd_[1] += ld
@@ -740,10 +757,11 @@ def main():
         try:
             pmx = {}
             for key, (dfrom, dto) in PERIODS.items():
-                prow = meta_rows(["campaign", "spend", "impressions", "clicks", "reach"], dfrom, dto)
+                prow = meta_rows(["campaign", "adset_id", "adset_name",
+                                  "spend", "impressions", "clicks", "reach"], dfrom, dto)
                 agg = {}
                 for r in prow:
-                    kind, m = classify(r.get("campaign"))
+                    kind, m = classify_row(r.get("campaign"), r.get("adset_name"))
                     if m is None: continue
                     a = agg.setdefault(m, {"imp": 0.0, "clicks": 0.0, "spend": 0.0, "reach": 0.0})
                     a["imp"] += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
