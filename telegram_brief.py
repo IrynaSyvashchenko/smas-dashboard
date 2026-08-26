@@ -58,9 +58,10 @@ def build(d):
     rs = rday.isoformat()
 
     M = d["managers"]
+    _hid = lambda m: bool((M.get(m) or {}).get("hide"))   # приховані (Юлиана, інста)
     rows = []; tsp = tld = tbk = 0
     for m, n in M.items():
-        if n.get("act") is False:
+        if n.get("act") is False or n.get("hide"):
             continue
         try:
             i = n["dates"].index(rs)
@@ -138,7 +139,7 @@ def build(d):
             al.append("• Креатив %s (%s): частота %.2f — вигорів" % (c["name"], c["m"], c["freq"]))
     # алерти ДИНАМІКИ з життєвого циклу (рахує пайплайн, та сама логіка, що на сайті):
     # CPL зламався після зміни бюджету / нова РК горить без лідів
-    LC = d.get("lifecycle") or []
+    LC = [r for r in (d.get("lifecycle") or []) if not _hid(r.get("m"))]
     for r in LC:
         v = r.get("verdict") or {}
         if v.get("code") == "degrade":
@@ -215,6 +216,35 @@ def build(d):
             sc.append("• %s (%s): $%.0f → $%.2f" % (s["adset"], s["m"], b, b * 1.25))
     if sc:
         L.append(""); L.append("🚀 Можна масштабувати сьогодні:"); L += sc
+
+    # 📋 вечірній зріз ПО КОЖНОМУ активному ад-сету (прохання Ірини, 26.08):
+    # бюджет, скільки днів живе, CPL за 3/7 днів (видно тренд), записи і CPA за
+    # 7 днів, коротка дія з вердикту пайплайна
+    LBL = {"degrade": "🔻 відкоти", "new_dead": "⛔ вимкни", "no_book": "⛔ не масштабуй",
+           "cpa_high": "💰 здешеви запис", "cpa_warn": "💰 дорогий запис",
+           "cpl_grow": "🎨 онови креатив", "freq": "🎨 свіжий креатив",
+           "wait": "⏳ чекай", "new_test": "🆕 тест", "new_ok": "🆕 працює",
+           "new_costly": "🆕 дорого", "holds": "🚀 можна +25%",
+           "scale_ok": "🚀 можна +25%", "inst": "🚀 обережно +20%", "few_data": "⏳ мало даних"}
+    per = []
+    cur_m = None
+    _f = lambda v: ("%.2f" % v) if v is not None else "—"
+    for r in sorted(LC, key=lambda x: (str(x["m"]), -(x.get("budget") or 0))):
+        if str(r["m"]).startswith("Инста"):
+            continue
+        if r["m"] != cur_m:
+            cur_m = r["m"]
+            per.append(""); per.append("%s:" % cur_m)
+        per.append("• %s — $%.0f/д · %s дн · CPL %s/%s · зап %s · CPA %s · %s" % (
+            r["adset"], r.get("budget") or 0, r.get("age") or "?",
+            _f(r.get("cpl3")), _f(r.get("cpl7")),
+            r["book7"] if r.get("book7") is not None else "—",
+            ("$%.0f" % r["cpa7"]) if r.get("cpa7") is not None else "—",
+            LBL.get((r.get("verdict") or {}).get("code"), "")))
+    if per:
+        L.append("")
+        L.append("📋 Всі ад-сети (бюджет/день · вік · CPL 3д/7д · записи · CPA 7д · дія):")
+        L += per
 
     L.append(""); L.append("📊 Дашборд: https://irynasyvashchenko.github.io/smas-dashboard/")
     return "\n".join(L)

@@ -134,6 +134,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   document.getElementById('updated').textContent='Оновлено: '+new Date(D.updated).toLocaleString('uk-UA')+' · '+D.periodNote+srcNote;
 
   const M=D.managers;
+  // приховані менеджери (hide з пайплайна: Юлиана + інста, 26.08) — не показуємо ніде,
+  // але дані в data.json продовжують збиратись
+  const hid=n=>!!(M[n]?.hide);
   const allDates=[...new Set(Object.values(M).flatMap(m=>m.dates))].sort();
   const today=allDates[allDates.length-1];
   const yest=addD(today,-1);
@@ -155,18 +158,18 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const tLeads=sumAll('leads',d=>d===today), tSpend=sumAll('spend',d=>d===today);
   // «нові записи сьогодні» = позначки запису, що ВПЕРШЕ з'явились сьогодні (bookingsToday з реєстру);
   // fallback на стару формулу для data.json без цього поля
-  const perB=Object.entries(M).map(([n,m])=>({n,c:m.bookingsToday??((m.bookings1d??0)+(m.bookingsOld1d??0))})).filter(x=>x.c>0).sort((a,b)=>b.c-a.c);
+  const perB=Object.entries(M).map(([n,m])=>({n,c:m.bookingsToday??((m.bookings1d??0)+(m.bookingsOld1d??0))})).filter(x=>x.c>0&&!hid(x.n)).sort((a,b)=>b.c-a.c);
   const tB=perB.reduce((s,x)=>s+x.c,0);
   const bookStr=tB?`<b>${tB}</b> — ${perB.map(x=>`${x.n} <b>${x.c}</b>`).join(' · ')}`:'<b>0</b>';
   // знято за день: позначки запису, які менеджери прибрали/змінили сьогодні
   // (скасування, «уже записана») — пояснює, чому «нових записів» могло поменшати
-  const remB=Object.entries(M).map(([n,m])=>({n,c:m.bookingsRemovedToday||0})).filter(x=>x.c>0).sort((a,b)=>b.c-a.c);
+  const remB=Object.entries(M).map(([n,m])=>({n,c:m.bookingsRemovedToday||0})).filter(x=>x.c>0&&!hid(x.n)).sort((a,b)=>b.c-a.c);
   const tR=remB.reduce((s,x)=>s+x.c,0);
   const remStr=tR?` · знято позначок за день: <b>−${tR}</b> (${remB.map(x=>`${x.n} ${x.c}`).join(' · ')})`:'';
   // розбивка сьогоднішнього дня по менеджерах: ліди + скільки вже відкручено
   const perT=Object.entries(M).map(([n,m])=>{const i=m.dates.indexOf(today);
       return {n,l:i<0?0:(m.leads[i]||0),s:i<0?0:(m.spend[i]||0)};})
-    .filter(x=>x.l>0||x.s>0).sort((a,b)=>b.s-a.s);
+    .filter(x=>(x.l>0||x.s>0)&&!hid(x.n)).sort((a,b)=>b.s-a.s);
   const perTStr=perT.length?`<br>По менеджерах: ${perT.map(x=>`${x.n} <b>${x.l}</b> л · <b>${fmt(x.s,0)}</b>`).join(' · ')}`:'';
   document.getElementById('todayStrip').innerHTML=
     `⏳ <b>Сьогодні (${dd(today)}) — день ще неповний</b>, дані Meta і записи доходять із затримкою: `+
@@ -313,7 +316,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const A=[];
     const deadAdsets=new Set();
     for(const a of (AS[k]||[])){
-      if(isInst(a.m)||a.act===false) continue;   // інста -> ліди в Direct; вимкнений -> дій не потребує
+      if(isInst(a.m)||hid(a.m)||a.act===false) continue;   // інста -> ліди в Direct; вимкнений -> дій не потребує
       if(a.spend>=5&&a.leads===0){
         deadAdsets.add(a.adset);
         A.push(['bad',`💸 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> витрачено, <b>0 лідів</b> — перевір або вимкни.`]);
@@ -330,7 +333,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     for(const a of (AS.d7||[])){ if(isInst(a.m)) continue; asBk7.set(a.m,(asBk7.get(a.m)||0)+(a.book||0)); }
     const unrel=m=>{const c=M[m]?.bookings7d||0; return c>=5&&(asBk7.get(m)||0)<c*0.6;};
     for(const a of (AS.d7||[])){
-      if(isInst(a.m)||a.act===false||deadAdsets.has(a.adset)||unrel(a.m)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
+      if(isInst(a.m)||hid(a.m)||a.act===false||deadAdsets.has(a.adset)||unrel(a.m)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
       const chk=M[a.m]?.check?.usd;
       if(a.spend>=25&&a.book===0)
         A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> за ${per} і <b>0 записів</b> — ліди не конвертяться.`]);
@@ -342,6 +345,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     // алерти ДИНАМІКИ з життєвого циклу (рахує пайплайн): CPL зламався після зміни
     // бюджету або нова РК горить без лідів — абсолютні пороги вище цього не ловлять
     for(const r of (D.lifecycle||[])){
+      if(hid(r.m)) continue;
       const v=r.verdict||{};
       if(v.code==='degrade')
         A.push(['bad',`📉 Ад-сет <b>${r.adset}</b> (${r.m}): ${v.text}.`]);
@@ -351,7 +355,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         A.push(['warn',`🆕 Ад-сет <b>${r.adset}</b> (${r.m}): ${v.text}.`]);
     }
     for(const c of (CR[k]||[])){
-      if(deadAdsets.has(c.adset)) continue;   // алерт по цілому ад-сету вже є
+      if(deadAdsets.has(c.adset)||hid(c.m)) continue;   // алерт по цілому ад-сету вже є
       if(c.act===false) continue;             // вимкнений креатив — дій не потребує
       if(!isInst(c.m)&&c.spend>=5&&c.leads===0)   // для інсти «0 лідів» — не помилка (Direct)
         A.push(['bad',`💸 Креатив <b>${c.name}</b> (${c.m}): <b>${fmt(c.spend)}</b> без лідів — вимикай.`]);
@@ -383,7 +387,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     let tSp=0,tLd=0,tBk=0,tFbk=0,tRev=0,tRevSp=0;
     const cards=[];
     // картки ВПОРЯДКОВАНІ по містах: Прага -> Париж -> Барселона; вимкнені (act===false) — в кінець
-    const ordered=Object.keys(M).sort((a,b)=>{
+    const ordered=Object.keys(M).filter(n=>!hid(n)).sort((a,b)=>{
       const xa=M[a].act===false?1:0, xb=M[b].act===false?1:0; if(xa!==xb) return xa-xb; const ia=CITY_ORDER.indexOf(M[a].city), ib=CITY_ORDER.indexOf(M[b].city);
       return ((ia<0?99:ia)-(ib<0?99:ib))||a.localeCompare(b);
     });
@@ -439,7 +443,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const CITY_ORDER=['Прага','Париж','Барселона'];
   const groupByMgr=list=>{
     const g=new Map();
-    for(const r of list){ if(!g.has(r.m)) g.set(r.m,[]); g.get(r.m).push(r); }
+    for(const r of list){ if(hid(r.m)) continue; if(!g.has(r.m)) g.set(r.m,[]); g.get(r.m).push(r); }
     return [...g.entries()].sort((a,b)=>{
       const ia=CITY_ORDER.indexOf(M[a[0]]?.city), ib=CITY_ORDER.indexOf(M[b[0]]?.city);
       return ((ia<0?99:ia)-(ib<0?99:ib))||a[0].localeCompare(b[0]);
@@ -635,7 +639,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const orderInSec=(x,y)=>{const ca=CITY_ORDER.indexOf(cityOf(x)), cb=CITY_ORDER.indexOf(cityOf(y));
       return ((ca<0?99:ca)-(cb<0?99:cb))||x.m.localeCompare(y.m)||((y.budget||0)-(x.budget||0));};
     for(const [cls,title,codes] of SEC){
-      const rows=LC.filter(r=>{const c=r.verdict?.code; return codes?codes.includes(c):!used.has(c);})
+      const rows=LC.filter(r=>!hid(r.m))
+                   .filter(r=>{const c=r.verdict?.code; return codes?codes.includes(c):!used.has(c);})
                    .sort(orderInSec);
       if(!rows.length) continue;
       scb.insertAdjacentHTML('beforeend',`<tr class="city"><td colspan="6" style="border-bottom-color:var(--${cls==='r'?'bad':cls==='g'?'good':'warn'})">${title} <span style="color:var(--mut);font-weight:400;font-size:.8rem">· ${rows.length}</span></td></tr>`);
@@ -720,7 +725,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // ---- графіки (з 1 липня — червневий розгін тільки шумить) ----
   const CHART_FROM='2026-07-01';
   const chartDates=allDates.filter(d=>d>=CHART_FROM);
-  const mkDs=key=>Object.entries(M).map(([n,m])=>({label:n,data:chartDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:m[key][i]}),borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
+  const mkDs=key=>Object.entries(M).filter(([n])=>!hid(n)).map(([n,m])=>({label:n,data:chartDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:m[key][i]}),borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
   new Chart(cplChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('cpl')},options:{interaction:{mode:'index',intersect:false}}});
   new Chart(leadsChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('leads')},options:{interaction:{mode:'index',intersect:false}}});
   new Chart(spendChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
@@ -728,7 +733,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // ---- CPA і записи ПО ДНЯХ (лінії, як CPL). Потребує bookingsDay з пайплайну ----
   const hasBD=Object.values(M).some(m=>Array.isArray(m.bookingsDay));
   if(hasBD){
-    const mkDayDs=fn=>Object.entries(M).filter(([n])=>!isInst(n)).map(([n,m])=>({label:n,
+    const mkDayDs=fn=>Object.entries(M).filter(([n])=>!isInst(n)&&!hid(n)).map(([n,m])=>({label:n,
       data:chartDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:fn(m,i);}),
       borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
     const cpaDay=(m,i)=>{const b=(m.bookingsDay||[])[i]||0;return b?Math.round((m.spend[i]||0)/b*100)/100:null;};

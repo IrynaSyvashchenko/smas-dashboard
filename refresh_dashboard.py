@@ -135,6 +135,12 @@ MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "20
                      INST_MGR_PARIS:  {"city": "Париж", "start": "2026-06-20"},
                      INST_MGR_PRAGUE: {"city": "Прага", "start": "2026-06-20"}}
 
+# Вимкнені менеджери (Ірина, 26.08): картка сіра і в кінці, дані лишаються.
+MANAGER_OFF  = ("Вика",)
+# Приховані зовсім (тимчасово, теж 26.08): сайт і бриф їх не показують,
+# дані в data.json продовжують збиратись — розховати = прибрати звідси.
+MANAGER_HIDE = ("Юлиана", INST_MGR_PARIS, INST_MGR_PRAGUE)
+
 # --- ROAS: середній чек (записи x чек / витрати; оцінка, бо запис != оплачена процедура) ---
 # Курси до USD (валюта кабінету) — константи, онови за потреби.
 EUR_USD = 1.17
@@ -169,6 +175,11 @@ MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
                "Алиса": "36427361", "Саида": "2065248461", "Даша": "1406387900",
                "Мага": "1445117368",
                "Вика": (VIKA_SS, "994125991")}
+
+# Додаткові CRM-вкладки менеджера (за НАЗВОЮ): нова РК -> нова вкладка ліда.
+# «Алиса Ирина модель» — ліди 149-ї (модельної) РК Алиси (Ірина, 26.08).
+# Рядки просто доливаються до основної вкладки; дедуп по (телефон, created_time).
+MANAGER_EXTRA_SHEETS = {"Алиса": ("Алиса Ирина модель",)}
 
 def _sheet_args(v):
     """gid або (ss, gid) -> kwargs для fetch_sheet_rows."""
@@ -682,6 +693,15 @@ def compute_bookings(barca_camps=frozenset()):
             rows = fetch_sheet_rows(**_sheet_args(gid))
         except Exception as e:
             print("  sheet FAIL", mgr, gid, "->", e); continue
+        # додаткові CRM-вкладки (нові РК): доливаємо рядки; збій дод. вкладки не
+        # валить основну (дедуп у _tally_manager по телефону+created_time)
+        for extra in MANAGER_EXTRA_SHEETS.get(mgr, ()):
+            try:
+                add = fetch_sheet_rows(sheet=extra)
+                rows = list(rows) + list(add)
+                print("  дод. CRM-вкладка «%s» (%s): %d рядків" % (extra, mgr, len(add)))
+            except Exception as e:
+                print("  дод. CRM-вкладка «%s» FAIL ->" % extra, str(e)[:80])
         res[mgr] = _tally_manager(rows, today,
                                   lambda r: r.get("phone_number"), _iryna_row)
         _print_mgr(mgr, res[mgr])
@@ -1422,6 +1442,12 @@ def main():
         if m in (INST_MGR_PARIS, INST_MGR_PRAGUE):
             # Инста Париж вимкнена вручну (Ірина, 19.07); решта — авто по витратах вчора/сьогодні
             node["act"] = (m != INST_MGR_PARIS) and bool(sum(spend[-2:]) > 0)
+        if m in MANAGER_OFF:
+            node["act"] = False           # картка сіра і в кінці (Вика, 26.08)
+        if m in MANAGER_HIDE:
+            node["hide"] = True           # сайт/бриф не показують зовсім
+        else:
+            node.pop("hide", None)
 
     # Bookings from the sheet (defensive: keep carried values on any problem)
     try:
