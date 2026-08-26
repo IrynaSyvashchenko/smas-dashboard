@@ -174,24 +174,32 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     `Для рішень дивись «Вчора» — це перший повний день.${perTStr}`;
 
   // ---- періоди ----
+  // Порядок вкладок = порядок ключів: свіже зліва (Вчора · 3 дні · 7 днів · поточний
+  // місяць), закриті місяці й «Весь час» — у кінці (прохання Ірини, 26.08).
+  const d3from=addD(today,-2);
   const P={
     yest:{label:'Вчора',qk:'yest',range:dd(yest),
           hint:`Повний закритий день — ${dd(yest)}. Найчесніші цифри для рішень.`,
           pred:d=>d===yest, bk:m=>m.bookingsYest??0,
           extra:m=>`<div class="row"><span class="l">Дата</span><b>${dd(yest)}</b></div>`},
+    d3:{label:'3 дні',qk:'d3',range:`${dd(d3from)} – ${dd(today)}`,
+          hint:`Останні 3 дні (${dd(d3from)} – ${dd(today)}, разом з неповним сьогодні) — швидкий пульс нових і щойно масштабованих РК.`,
+          pred:d=>d>=d3from,
+          bk:m=>m.bookings3d??((m.bookingsDay||[]).reduce((s,v,i)=>s+((m.dates[i]||'')>=d3from?(v||0):0),0)),
+          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d3from).length}</b></div>`},
     d7:{label:'7 днів',qk:'d7',range:`${dd(d7from)} – ${dd(today)}`,
           hint:`${dd(d7from)} – ${dd(today)} (включно з неповним сьогодні).`,
           pred:d=>d>=d7from, bk:m=>m.bookings7d??0,
           extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d7from).length}</b></div>`},
+    month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(today)}`,
+          hint:`Поточний календарний місяць — те, що йде у звіт для керівництва.`,
+          pred:d=>d.startsWith(monthPref), bk:m=>m.bookingsMonth??0,
+          extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(monthPref)).length}</b></div>`},
     pmonth:{label:pmName,qk:'pmonth',range:`${dd(pmPref+'-01')} – ${dd(pmLast)}`,
           hint:`Попередній календарний місяць (${pmName}) — закритий, цифри вже не зміняться.`,
           pred:d=>d.startsWith(pmPref),
           bk:m=>m.bookingsPrevMonth??((m.bookingsDay||[]).reduce((s,v,i)=>s+((m.dates[i]||'').startsWith(pmPref)?(v||0):0),0)),
           extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(pmPref)).length}</b></div>`},
-    month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(today)}`,
-          hint:`Поточний календарний місяць — те, що йде у звіт для керівництва.`,
-          pred:d=>d.startsWith(monthPref), bk:m=>m.bookingsMonth??0,
-          extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(monthPref)).length}</b></div>`},
     all:{label:'Весь час',qk:'all',range:`${dd(allDates[0])} – ${dd(today)}`,
           hint:`Від старту кожного менеджера. Періоди різні — порівнювати менеджерів між собою тут не можна.`,
           pred:d=>true, bk:m=>m.bookings??0,
@@ -203,7 +211,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // Старий data.json (до першого автооновлення) містить простий масив за 7 днів —
   // тоді показуємо його в усіх періодах з попередженням.
   const oldFmt=Array.isArray(D.adsets)||Array.isArray(D.creatives);
-  const normP=x=>Array.isArray(x)?{yest:x,d7:x,month:x,all:x}:(x||{});
+  const normP=x=>Array.isArray(x)?{yest:x,d3:x,d7:x,month:x,all:x}:(x||{});
   const AS=normP(D.adsets), CR=normP(D.creatives);
   const OLDFMT_NOTE='⚠️ Дані таблиці поки за останні 7 днів (старий формат) — перемикання періодів запрацює після наступного автооновлення. ';
 
@@ -330,6 +338,17 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — це ≥25% чека ${fmt(chk,0)}.`]);
       else if(chk&&a.cpa!=null&&a.cpa>=chk*0.15)
         A.push(['warn',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — дорожче за 15% чека ${fmt(chk,0)}.`]);
+    }
+    // алерти ДИНАМІКИ з життєвого циклу (рахує пайплайн): CPL зламався після зміни
+    // бюджету або нова РК горить без лідів — абсолютні пороги вище цього не ловлять
+    for(const r of (D.lifecycle||[])){
+      const v=r.verdict||{};
+      if(v.code==='degrade')
+        A.push(['bad',`📉 Ад-сет <b>${r.adset}</b> (${r.m}): ${v.text}.`]);
+      else if(v.code==='new_dead'&&!deadAdsets.has(r.adset))
+        A.push(['bad',`🆕 Ад-сет <b>${r.adset}</b> (${r.m}): ${v.text}.`]);
+      else if(v.code==='new_costly')
+        A.push(['warn',`🆕 Ад-сет <b>${r.adset}</b> (${r.m}): ${v.text}.`]);
     }
     for(const c of (CR[k]||[])){
       if(deadAdsets.has(c.adset)) continue;   // алерт по цілому ад-сету вже є
@@ -567,8 +586,67 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     document.getElementById('crNote').textContent=notes.join('');
   }
 
+  // ---- спарклайн CPL по днях (2 тижні) з adsHist; пунктир = день зміни бюджету ----
+  function spark(aid,chgDate){
+    const h=(D.adsHist||{})[aid]; if(!h) return '';
+    const ds=Object.keys(h.days).sort().slice(-14);
+    const vals=ds.map(d=>{const v=h.days[d];return v[1]>0?v[0]/v[1]:null;});
+    const nums=vals.filter(v=>v!=null); if(nums.length<3) return '';
+    const mn=Math.min(...nums), mx=Math.max(...nums), W=96, H=26, PAD=2;
+    const x=i=>PAD+i*(W-2*PAD)/Math.max(ds.length-1,1);
+    const y=v=>mx===mn?H/2:H-PAD-(v-mn)*(H-2*PAD)/(mx-mn);
+    const pts=[]; vals.forEach((v,i)=>{if(v!=null)pts.push(`${x(i).toFixed(1)},${y(v).toFixed(1)}`);});
+    const ci=chgDate?ds.indexOf(chgDate):-1;
+    const col=nums[nums.length-1]>=nums[0]*1.3?'var(--bad)':nums[nums.length-1]<=nums[0]*0.85?'var(--good)':'var(--mut)';
+    return `<svg width="${W}" height="${H}" style="vertical-align:middle" title="CPL по днях: $${mn.toFixed(2)}–$${mx.toFixed(2)}">`+
+      (ci>=0?`<line x1="${x(ci).toFixed(1)}" y1="0" x2="${x(ci).toFixed(1)}" y2="${H}" stroke="var(--warn)" stroke-width="1" stroke-dasharray="2,2"/>`:'')+
+      `<polyline points="${pts.join(' ')}" fill="none" stroke="${col}" stroke-width="1.5"/></svg>`;
+  }
+
+  // ---- масштабування, НОВИЙ формат: життєвий цикл з пайплайну (D.lifecycle) ----
+  // Вік, днів на бюджеті, CPL 3д/7д, CPL до/після зміни бюджету, спарклайн, вердикт.
+  function renderLifecycle(LC){
+    document.getElementById('scSection').style.display='';
+    document.querySelector('#scTable thead').innerHTML=
+      `<tr><th>Ад-сет · кампанія</th><th>Бюджет/день</th><th>Остання зміна бюджету</th>`+
+      `<th>CPL · 3 дні</th><th>CPL · 7 днів</th><th>CPL до → після зміни</th>`+
+      `<th>CPA · 7д / місяць</th><th>CPL по днях</th><th>Рекомендація</th></tr>`;
+    const rows=[...LC].sort((x,y)=>{const ca=CITY_ORDER.indexOf(M[x.m]?.city), cb=CITY_ORDER.indexOf(M[y.m]?.city);
+      return ((ca<0?99:ca)-(cb<0?99:cb))||x.m.localeCompare(y.m)||((y.budget||0)-(x.budget||0));});
+    const scb=document.querySelector('#scTable tbody'); scb.innerHTML='';
+    let scCity=null;
+    for(const r of rows){
+      const city=M[r.m]?.city||'—';
+      if(city!==scCity){scCity=city;scb.insertAdjacentHTML('beforeend',cityRow(city,9));}
+      const ch=r.chg;
+      const chgS=ch?`${dd(ch.date)}${ch.time?` о ${ch.time}`:''}${ch.from!=null&&ch.to!=null?`<br><span style="color:var(--mut);font-size:.72rem">${fmt(ch.from,0)} → ${fmt(ch.to,0)}</span>`:''}`
+                  :(r.created?`не мінявся (з ${dd(r.created)})`:'—');
+      const grow=r.cpl7!=null&&r.cplM!=null&&r.cpl7>=r.cplM*1.3;
+      const ba=(r.cplBefore!=null&&r.cplAfter!=null)?
+        `<span${r.cplAfter>=r.cplBefore*1.4?' style="color:var(--bad)"':r.cplAfter<=r.cplBefore*1.15?' style="color:var(--good)"':''}>${fmt(r.cplBefore)} → ${fmt(r.cplAfter)}</span>`:'—';
+      const cc7=cpaColor(city,r.cpa7), ccM=cpaColor(city,r.cpaM);
+      const cpaS=(r.cpa7!=null||r.cpaM!=null)?
+        `<span${cc7?` style="color:${cc7}"`:''}>${fmt(r.cpa7)}</span> · <span${ccM?` style="color:${ccM}"`:''}>${fmt(r.cpaM)}</span>`:(r.unrel?'—*':'—');
+      const isNew=(r.age??99)<=3;
+      const v=r.verdict||{};
+      scb.insertAdjacentHTML('beforeend',`<tr>
+        <td>${r.adset}${isNew?' <span class="tag y">нова</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${r.m} · ${r.campaign||''} · вік ${r.age??'—'} дн.</span></td>
+        <td><b>${fmt(r.budget)}</b>${r.lvl==='campaign'?' <span class="tag y">CBO</span>':''}${r.daysAt!=null?`<br><span style="color:var(--mut);font-size:.72rem">${r.daysAt} дн. на бюджеті</span>`:''}</td>
+        <td>${chgS}</td>
+        <td>${fmt(r.cpl3)}</td>
+        <td${grow?' style="color:var(--warn)"':''}>${fmt(r.cpl7)}</td>
+        <td>${ba}</td>
+        <td>${cpaS}</td>
+        <td>${spark(r.id,ch?.date)}</td>
+        <td><span class="tag ${v.cls==='r'?'r':v.cls==='g'?'g':'y'}">${v.text||'—'}</span></td></tr>`);
+    }
+    document.getElementById('scNote').textContent='Рахується пайплайном з ДЕННОЇ історії кожного ад-сета. «CPL · 3 дні» — швидкий пульс нових і щойно масштабованих; «до → після зміни» — CPL за 7 днів перед останньою зміною бюджету проти днів після неї: зелений = тримає (≤ +15%), червоний = виріс ≥40% — відкоти бюджет або дублюй ад-сет на $10. Спарклайн — CPL по днях за 2 тижні (червоний = дорожчає, зелений = дешевшає), пунктирна риска — день зміни бюджету. Нові РК (≤3 дн.) судяться м’яко: CPL перших днів проти CPL менеджера за 7 днів. «Можна +20–30%» = CPA за 7 днів здоровий (<15% чека), ≥2 записи, частота <2.2 і від останньої зміни минуло ≥2 повні дні (правило Meta про навчання). Дата й час змін — пояс кабінету (дубайський, +2 год до Праги); неопубліковані чернетки з Ads Manager тут не видно. «—*» = записи менеджера зараз не сідають на ад-сети (сира вкладка відстає) — CPA не судимо.';
+  }
+
   // ---- масштабування: бюджет + остання зміна (журнал кабінету) + рекомендація ----
   function renderScaling(){
+    const LC=D.lifecycle;
+    if(Array.isArray(LC)&&LC.length){renderLifecycle(LC);return;}   // новий формат з пайплайну
     const sc=D.scaling;
     if(!Array.isArray(sc)||!sc.length) return;
     document.getElementById('scSection').style.display='';
