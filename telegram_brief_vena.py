@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Ранковий Telegram-бриф по кабінету ad5: Стомат Київ + Стомат Квіз, СМАС Відень/Київ/Тернопіль.
+"""Вечірній Telegram-бриф по кабінету ad5: Стомат Київ + Стомат Квіз, СМАС Відень/Київ/Тернопіль.
 
 Запускається з GitHub Actions після кожного «Refresh vena dashboard (ad5)»
-(workflow_run), але шле ЛИШЕ після першого ранкового оновлення (година updated
-7..8 за Києвом) — кабінет живе за Києвом (UTC+3), тож на цей момент вчорашній
-день повністю закритий. Ручний запуск (workflow_dispatch) шле завжди.
+(workflow_run), але шле ЛИШЕ після вечірнього оновлення (година updated 21..23
+за Києвом, фактично ~23:00) — разом зі SMAS-брифом. Кабінет живе за Києвом
+(UTC+3), тож звітуємо «за сьогодні» станом на ~23:00 (без останньої години
+дня — різниця мізерна). Ручний запуск (workflow_dispatch) шле завжди.
 
 Дані вже пораховані дашбордом (vena/data.json) — тут нічого не тягнеться з Meta.
 Секрет (GitHub Actions): TELEGRAM_BOT_TOKEN — токен бота @ad_smas_lifting_bot.
@@ -26,7 +27,7 @@ def send(text):
                                    "disable_web_page_preview": "true"}).encode("utf-8")
     urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30).read()
 
-def build(d):
+def build(d, use_today=True):
     upd = d["updated"]
     try:
         ut = datetime.datetime.fromisoformat(upd)
@@ -35,9 +36,10 @@ def build(d):
     except Exception:
         pass
 
-    # Звітний день = вчора за Києвом: усі yest-зрізи в data.json рахуються від дати updated.
+    # Звітний день: увечері = сьогодні (день, що закривається, дані до ~23:00);
+    # вранішнє надолуження / ручний ранковий запуск = учора (повний день).
     today = datetime.date.fromisoformat(upd[:10])
-    rday  = today - datetime.timedelta(days=1)
+    rday  = today if use_today else today - datetime.timedelta(days=1)
     rs    = rday.isoformat()
 
     M = d["managers"]
@@ -48,7 +50,7 @@ def build(d):
         except (KeyError, ValueError):
             continue
         sp = n["spend"][i] or 0; ld = n["leads"][i] or 0
-        bk = n.get("bookingsYest") or 0
+        bk = (n.get("bookingsToday") if use_today else n.get("bookingsYest")) or 0
         if sp <= 0 and ld <= 0 and not bk:
             continue
         tsp += sp; tld += ld; tbk += bk
@@ -56,7 +58,8 @@ def build(d):
     rows.sort(key=lambda r: -r[1])
 
     cpa = ("$%.2f" % (tsp / tbk)) if tbk else "—"
-    L = ["🦷 Кабінет ad5 за вчора (%s)" % rday.strftime("%d.%m"),
+    hdr = "сьогодні" if use_today else "вчора"
+    L = ["🦷 Кабінет ad5 за %s (%s)" % (hdr, rday.strftime("%d.%m")),
          "Разом: $%.0f · %d лідів · %d записів · CPA %s" % (tsp, tld, tbk, cpa), ""]
     for m, sp, ld, bk in rows:
         cpl = (" (лід $%.2f)" % (sp / ld)) if ld else ""
@@ -73,7 +76,7 @@ def build(d):
             continue
         if (a.get("spend") or 0) >= 5 and (a.get("leads") or 0) == 0:
             dead.add(a["adset"])
-            al.append("• %s (%s): $%.2f без лідів — глянь або вимкни" % (a["adset"], a["m"], a["spend"]))
+            al.append("• %s (%s): $%.2f вчора без лідів — глянь або вимкни" % (a["adset"], a["m"], a["spend"]))
     for a in (d.get("adsets", {}).get("d7") or []):
         m = a["m"]
         if a.get("act") is False or a["adset"] in dead or days_live(m) < 4:
@@ -131,11 +134,12 @@ def main():
     manual = os.environ.get("GITHUB_EVENT_NAME", "") == "workflow_dispatch"
     upd = d.get("updated", "")
     hour = int(upd[11:13]) if len(upd) >= 13 else -1
-    # шлемо після першого ранкового оновлення (~07:40 за Києвом); решту запусків пропускаємо
-    if not manual and not (7 <= hour <= 8):
-        print("skip: not the morning refresh (updated hour=%d)" % hour)
+    # шлемо після ВЕЧІРНЬОГО оновлення (~22:00-23:59 за Києвом), коли день майже закритий;
+    # решту запусків пропускаємо. Ручний запуск: після обіду звітуємо «сьогодні», зранку — «вчора».
+    if not manual and not (21 <= hour <= 23):
+        print("skip: not the evening refresh (updated hour=%d)" % hour)
         return
-    text = build(d)
+    text = build(d, use_today=(hour >= 12))
     send(text)
     print("sent, %d chars" % len(text))
 
