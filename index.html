@@ -111,7 +111,7 @@ tr:hover td{background:var(--card2)}
 
 <div id="scSection" style="display:none">
 <h2>🚀 Масштабування</h2>
-<div class="phint">Безпечне правило: піднімати бюджет на <b>20–30%</b> і не частіше, ніж <b>раз на 2–3 дні</b> — різкіший або частіший стрибок скидає навчання ад-сета (Meta: не редагуй, поки ад-сет «навчається»). Рекомендація враховує CPA за 7 днів, частоту і дату останньої зміни бюджету з журналу кабінету.</div>
+<div class="phint">Що робити з кожним активним ад-сетом: 🔴 полагодь → 🟢 можна піднімати бюджет → 🟡 не чіпай. Правило: +20–30% і не частіше, ніж раз на 2–3 дні.</div>
 <div style="overflow-x:auto"><table id="scTable">
 <thead><tr><th>Ад-сет · кампанія</th><th>Бюджет/день</th><th>Остання зміна бюджету</th><th>CPL · 7 днів</th><th>CPL · місяць</th><th>CPA · 7 днів</th><th>CPA · місяць</th><th>Рекомендація</th></tr></thead>
 <tbody></tbody></table></div>
@@ -592,7 +592,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const ds=Object.keys(h.days).sort().slice(-14);
     const vals=ds.map(d=>{const v=h.days[d];return v[1]>0?v[0]/v[1]:null;});
     const nums=vals.filter(v=>v!=null); if(nums.length<3) return '';
-    const mn=Math.min(...nums), mx=Math.max(...nums), W=96, H=26, PAD=2;
+    const mn=Math.min(...nums), mx=Math.max(...nums), W=120, H=30, PAD=2;
     const x=i=>PAD+i*(W-2*PAD)/Math.max(ds.length-1,1);
     const y=v=>mx===mn?H/2:H-PAD-(v-mn)*(H-2*PAD)/(mx-mn);
     const pts=[]; vals.forEach((v,i)=>{if(v!=null)pts.push(`${x(i).toFixed(1)},${y(v).toFixed(1)}`);});
@@ -604,43 +604,53 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   }
 
   // ---- масштабування, НОВИЙ формат: життєвий цикл з пайплайну (D.lifecycle) ----
-  // Вік, днів на бюджеті, CPL 3д/7д, CPL до/після зміни бюджету, спарклайн, вердикт.
+  // Читабельність понад усе: 3 секції ЗА ДІЄЮ (діяти / масштабувати / чекати),
+  // короткий ярлик дії + дрібний рядок з причиною, 6 колонок замість 9.
   function renderLifecycle(LC){
     document.getElementById('scSection').style.display='';
     document.querySelector('#scTable thead').innerHTML=
-      `<tr><th>Ад-сет · кампанія</th><th>Бюджет/день</th><th>Остання зміна бюджету</th>`+
-      `<th>CPL · 3 дні</th><th>CPL · 7 днів</th><th>CPL до → після зміни</th>`+
-      `<th>CPA · 7д / місяць</th><th>CPL по днях</th><th>Рекомендація</th></tr>`;
-    const rows=[...LC].sort((x,y)=>{const ca=CITY_ORDER.indexOf(M[x.m]?.city), cb=CITY_ORDER.indexOf(M[y.m]?.city);
-      return ((ca<0?99:ca)-(cb<0?99:cb))||x.m.localeCompare(y.m)||((y.budget||0)-(x.budget||0));});
+      `<tr><th>Ад-сет</th><th>Бюджет</th><th>CPL 3д / 7д</th><th>Запис (CPA·7д)</th>`+
+      `<th>CPL по днях</th><th>Що робити</th></tr>`;
+    // короткий ярлик дії по коду вердикту (повне пояснення — дрібним під ним)
+    const LBL={degrade:'🔻 Відкоти бюджет',new_dead:'⛔ Вимкни',no_book:'⛔ Не масштабуй',
+      cpa_high:'💰 Здешеви запис',cpa_warn:'💰 Дорогий запис',cpl_grow:'🎨 Онови креатив',
+      freq:'🎨 Свіжий креатив',wait:'⏳ Зачекай',new_test:'🆕 Тест — не чіпай',
+      new_ok:'🆕 Працює',new_costly:'🆕 Дорого — дивись',holds:'🚀 Можна +20–30%',
+      scale_ok:'🚀 Можна +20–30%',inst:'🚀 Обережно +20%',few_data:'⏳ Мало даних'};
+    // секції за дією: спершу те, що вимагає рук, потім що можна підняти, потім «не чіпай»
+    const SEC=[
+      ['r','🔴 Треба діяти',['degrade','new_dead','no_book','cpa_high']],
+      ['g','🟢 Можна масштабувати',['scale_ok','holds','inst']],
+      ['y','🟡 Чекай або спостерігай',null]];   // null = решта
+    const used=new Set(SEC.flatMap(s=>s[2]||[]));
     const scb=document.querySelector('#scTable tbody'); scb.innerHTML='';
-    let scCity=null;
-    for(const r of rows){
-      const city=M[r.m]?.city||'—';
-      if(city!==scCity){scCity=city;scb.insertAdjacentHTML('beforeend',cityRow(city,9));}
-      const ch=r.chg;
-      const chgS=ch?`${dd(ch.date)}${ch.time?` о ${ch.time}`:''}${ch.from!=null&&ch.to!=null?`<br><span style="color:var(--mut);font-size:.72rem">${fmt(ch.from,0)} → ${fmt(ch.to,0)}</span>`:''}`
-                  :(r.created?`не мінявся (з ${dd(r.created)})`:'—');
-      const grow=r.cpl7!=null&&r.cplM!=null&&r.cpl7>=r.cplM*1.3;
-      const ba=(r.cplBefore!=null&&r.cplAfter!=null)?
-        `<span${r.cplAfter>=r.cplBefore*1.4?' style="color:var(--bad)"':r.cplAfter<=r.cplBefore*1.15?' style="color:var(--good)"':''}>${fmt(r.cplBefore)} → ${fmt(r.cplAfter)}</span>`:'—';
-      const cc7=cpaColor(city,r.cpa7), ccM=cpaColor(city,r.cpaM);
-      const cpaS=(r.cpa7!=null||r.cpaM!=null)?
-        `<span${cc7?` style="color:${cc7}"`:''}>${fmt(r.cpa7)}</span> · <span${ccM?` style="color:${ccM}"`:''}>${fmt(r.cpaM)}</span>`:(r.unrel?'—*':'—');
-      const isNew=(r.age??99)<=3;
-      const v=r.verdict||{};
-      scb.insertAdjacentHTML('beforeend',`<tr>
-        <td>${r.adset}${isNew?' <span class="tag y">нова</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${r.m} · ${r.campaign||''} · вік ${r.age??'—'} дн.</span></td>
-        <td><b>${fmt(r.budget)}</b>${r.lvl==='campaign'?' <span class="tag y">CBO</span>':''}${r.daysAt!=null?`<br><span style="color:var(--mut);font-size:.72rem">${r.daysAt} дн. на бюджеті</span>`:''}</td>
-        <td>${chgS}</td>
-        <td>${fmt(r.cpl3)}</td>
-        <td${grow?' style="color:var(--warn)"':''}>${fmt(r.cpl7)}</td>
-        <td>${ba}</td>
-        <td>${cpaS}</td>
-        <td>${spark(r.id,ch?.date)}</td>
-        <td><span class="tag ${v.cls==='r'?'r':v.cls==='g'?'g':'y'}">${v.text||'—'}</span></td></tr>`);
+    const cityOf=r=>M[r.m]?.city||'—';
+    const orderInSec=(x,y)=>{const ca=CITY_ORDER.indexOf(cityOf(x)), cb=CITY_ORDER.indexOf(cityOf(y));
+      return ((ca<0?99:ca)-(cb<0?99:cb))||x.m.localeCompare(y.m)||((y.budget||0)-(x.budget||0));};
+    for(const [cls,title,codes] of SEC){
+      const rows=LC.filter(r=>{const c=r.verdict?.code; return codes?codes.includes(c):!used.has(c);})
+                   .sort(orderInSec);
+      if(!rows.length) continue;
+      scb.insertAdjacentHTML('beforeend',`<tr class="city"><td colspan="6" style="border-bottom-color:var(--${cls==='r'?'bad':cls==='g'?'good':'warn'})">${title} <span style="color:var(--mut);font-weight:400;font-size:.8rem">· ${rows.length}</span></td></tr>`);
+      for(const r of rows){
+        const v=r.verdict||{}, ch=r.chg, city=cityOf(r);
+        const isNew=(r.age??99)<=3;
+        const cc7=cpaColor(city,r.cpa7);
+        const cpl37=(r.cpl3!=null||r.cpl7!=null)?`${r.cpl3!=null?fmt(r.cpl3):'—'} <span style="color:var(--mut)">/ ${r.cpl7!=null?fmt(r.cpl7):'—'}</span>`:'—';
+        scb.insertAdjacentHTML('beforeend',`<tr>
+          <td style="border-left:3px solid ${COLORS[r.m]||'#4f8cff'}" title="${(r.campaign||'').replace(/"/g,'&quot;')}">${r.adset}<br><span style="color:var(--mut);font-size:.72rem">${r.m} · ${city}${isNew?` · ${r.age} дн.`:''}</span></td>
+          <td><b>${fmt(r.budget,0)}</b>${r.lvl==='campaign'?' <span class="tag y">CBO</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${ch?`${dd(ch.date)}: ${ch.from!=null&&ch.to!=null?`${fmt(ch.from,0)}→${fmt(ch.to,0)}`:'зміна'}`:(r.daysAt!=null?`${r.daysAt} дн. без змін`:'')}</span></td>
+          <td>${cpl37}</td>
+          <td${cc7?` style="color:${cc7}"`:''}>${r.cpa7!=null?fmt(r.cpa7):(r.unrel?'—*':'—')}</td>
+          <td>${spark(r.id,ch?.date)}</td>
+          <td><span class="tag ${v.cls==='r'?'r':v.cls==='g'?'g':'y'}" style="font-size:.8rem">${LBL[v.code]||'—'}</span><br><span style="color:var(--mut);font-size:.72rem">${v.text||''}</span></td></tr>`);
+      }
     }
-    document.getElementById('scNote').textContent='Рахується пайплайном з ДЕННОЇ історії кожного ад-сета. «CPL · 3 дні» — швидкий пульс нових і щойно масштабованих; «до → після зміни» — CPL за 7 днів перед останньою зміною бюджету проти днів після неї: зелений = тримає (≤ +15%), червоний = виріс ≥40% — відкоти бюджет або дублюй ад-сет на $10. Спарклайн — CPL по днях за 2 тижні (червоний = дорожчає, зелений = дешевшає), пунктирна риска — день зміни бюджету. Нові РК (≤3 дн.) судяться м’яко: CPL перших днів проти CPL менеджера за 7 днів. «Можна +20–30%» = CPA за 7 днів здоровий (<15% чека), ≥2 записи, частота <2.2 і від останньої зміни минуло ≥2 повні дні (правило Meta про навчання). Дата й час змін — пояс кабінету (дубайський, +2 год до Праги); неопубліковані чернетки з Ads Manager тут не видно. «—*» = записи менеджера зараз не сідають на ад-сети (сира вкладка відстає) — CPA не судимо.';
+    document.getElementById('scNote').innerHTML='<details><summary style="cursor:pointer">Як читати цю таблицю</summary><div style="margin-top:6px">'+
+      'Рядки згруповані за ДІЄЮ: 🔴 — щось зламалось, зайди в кабінет; 🟢 — здорові ад-сети, яким можна підняти бюджет на 20–30% (не частіше, ніж раз на 2–3 дні); 🟡 — нові, щойно змінені або з малою статистикою: їх не чіпай.<br><br>'+
+      '<b>CPL 3д / 7д</b> — ціна ліда за останні 3 дні проти 7 днів: якщо ліве число помітно більше — дорожчає прямо зараз. <b>Запис</b> — ціна запису за 7 днів, підсвічена порогами міста. <b>CPL по днях</b> — графік за 2 тижні: червона лінія = дорожчає, зелена = дешевшає, жовтий пунктир = день зміни бюджету.<br><br>'+
+      'Під бюджетом дрібним — остання зміна (дата: було→стало, час кабінету, Дубай +2 до Праги). Неопубліковані чернетки Ads Manager тут не видно. «—*» = записи цього менеджера зараз не сідають на ад-сети (сира вкладка відстає) — CPA не судимо. Свіжі записи доганяють ліди 1–5 днів, тому в щойно масштабованих CPA перші дні виглядає гіршою, ніж є.'+
+      '</div></details>';
   }
 
   // ---- масштабування: бюджет + остання зміна (журнал кабінету) + рекомендація ----
