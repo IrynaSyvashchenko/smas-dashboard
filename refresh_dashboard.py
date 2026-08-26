@@ -556,12 +556,12 @@ def _tally_manager(rows, today, phone_of, row_ok):
     yest = today - datetime.timedelta(days=1)
     month_start = today.replace(day=1)
     pm_start = (month_start - datetime.timedelta(days=1)).replace(day=1)   # попередній місяць
-    booked = b7 = b1 = leads = 0
+    booked = b7 = b3 = b1 = leads = 0
     bY = bM = bPM = 0                   # bookings among leads created yesterday / this / prev month
     old_keys = []                       # keys of booked leads created BEFORE today
     booked_keys = []                    # ключі ВСІХ поточних записів (для реєстру «коли з'явився запис»)
     # lead quality per period: leads / нецільові / без реакції (ліквід = leads-bad-noresp)
-    Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "pmonth", "all")}
+    Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d3", "d7", "month", "pmonth", "all")}
     leadsQ = []   # усі мої ліди з телефоном: дата + прапорці (для таблиць ад-сетів/креативів по періодах)
     # АУДИТ підрахунку записів (порівняння з фактами адміністратора):
     #   pm_bd/m_bd  = записи по ДАТІ ЗАПИСУ (дата_и_время_записи) у попер./поточ. місяці
@@ -627,6 +627,7 @@ def _tally_manager(rows, today, phone_of, row_ok):
         buckets = ["all"]
         if cd:
             if cd == yest: buckets.append("yest")
+            if 0 <= (today - cd).days < 3: buckets.append("d3")
             if 0 <= (today - cd).days < 7: buckets.append("d7")
             if cd >= month_start: buckets.append("month")
             if pm_start <= cd < month_start: buckets.append("pmonth")
@@ -646,6 +647,8 @@ def _tally_manager(rows, today, phone_of, row_ok):
             if cd:
                 if 0 <= (today - cd).days < 7:
                     b7 += 1
+                if 0 <= (today - cd).days < 3:
+                    b3 += 1
                 if cd == yest: bY += 1
                 if cd >= month_start: bM += 1
                 if pm_start <= cd < month_start: bPM += 1
@@ -656,7 +659,7 @@ def _tally_manager(rows, today, phone_of, row_ok):
             else:
                 old_keys.append("%s|%s" % (k[0], k[1]))   # unknown date -> treat as old
 
-    return {"bookings": booked, "bookings7d": b7, "bookings1d": b1, "bkAudit": audit,
+    return {"bookings": booked, "bookings7d": b7, "bookings3d": b3, "bookings1d": b1, "bkAudit": audit,
             "bookingsYest": bY, "bookingsMonth": bM, "bookingsPrevMonth": bPM,
             "leads_seen": leads, "old_keys": old_keys, "q": Q,
             "leadsQ": leadsQ, "booked_keys": booked_keys}
@@ -979,6 +982,62 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
               % (key, len(res), sum(1 for c in res if c["act"])))
     return out
 
+HIST_FETCH_DAYS = 35   # скільки днів тягнемо з Meta при кожному оновленні
+HIST_KEEP_DAYS  = 70   # скільки днів історії тримаємо в data.json
+
+def build_adset_hist(cur, bk, raw_map, raw_ok):
+    """Щоденна історія по ад-сетах: {adset_id: {m, adset, campaign, days:{дата:[spend, leads, book]}}}.
+
+    Фундамент аналітики масштабування: тренд CPL по днях, порівняння «до/після»
+    зміни бюджету, вік нової РК. Свіжі HIST_FETCH_DAYS днів перезаписуються при
+    кожному оновленні (записи доганяють ліди з лагом), старіші дні зберігаються
+    зі старого data.json до HIST_KEEP_DAYS. Повертає None, якщо Meta нічого не
+    віддала — тоді стара історія лишається як була."""
+    td = datetime.date.fromisoformat(TODAY)
+    hfrom = max(DATE_FROM, (td - datetime.timedelta(days=HIST_FETCH_DAYS - 1)).isoformat())
+    rows = meta_rows(["date", "account_id", "campaign", "adset_id", "adset_name",
+                      "spend", "actions_lead"], hfrom, TODAY)
+    fresh = {}
+    for r in rows:
+        if not acct_ok(r):
+            continue
+        kind, m = classify(r.get("campaign"))
+        if m is None:
+            continue
+        aid = str(r.get("adset_id") or ""); d = str(r.get("date") or "")[:10]
+        if not aid or not d:
+            continue
+        h = fresh.setdefault(aid, {"m": m, "adset": r.get("adset_name"),
+                                   "campaign": r.get("campaign"), "days": {}})
+        if r.get("adset_name"): h["adset"] = r.get("adset_name")
+        cell = h["days"].setdefault(d, [0.0, 0, 0])
+        cell[0] = round(cell[0] + num(r.get("spend")), 2)
+        cell[1] += int(num(r.get("actions_lead")))
+    if not fresh:
+        return None
+    # записи по днях (за датою СТВОРЕННЯ ліда) -> ад-сет по adset_id —
+    # та сама атрибуція, що в build_adsets (по ID, не по назві)
+    for mgr in (raw_ok if bk else []):
+        for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
+            if not L["bk"] or not L["cd"] or L["cd"] < hfrom:
+                continue
+            aid = (raw_map.get(L["ph"]) or {}).get("adset_id")
+            if aid in fresh:
+                fresh[aid]["days"].setdefault(L["cd"], [0.0, 0, 0])[2] += 1
+    # злиття зі старою історією: свіжі дні поверх, старіші за вікно — лишаються
+    cutoff = (td - datetime.timedelta(days=HIST_KEEP_DAYS)).isoformat()
+    prev = cur.get("adsHist") or {}
+    for aid, ph in prev.items():
+        old_days = {d: v for d, v in (ph.get("days") or {}).items()
+                    if cutoff <= d < hfrom}
+        if aid in fresh:
+            merged = dict(old_days); merged.update(fresh[aid]["days"])
+            fresh[aid]["days"] = merged
+        elif old_days:
+            fresh[aid] = {"m": ph.get("m"), "adset": ph.get("adset"),
+                          "campaign": ph.get("campaign"), "days": old_days}
+    return fresh
+
 def _graph_all(edge, fields, extra=None):
     """GET /act_{ACCOUNT}/{edge} з пагінацією -> список рядків."""
     params = {"fields": fields, "limit": "200", "access_token": META_TOKEN}
@@ -1069,8 +1128,10 @@ def fetch_scaling():
     adsets = _graph_all("adsets",
                         "id,name,daily_budget,effective_status,created_time,"
                         "campaign{id,name,daily_budget}")
-    # журнал змін бюджету: object_id -> остання подія (бюджети Meta віддає в центах)
+    # журнал змін бюджету: остання подія (для chg) + ПОВНИЙ лог по кожному object_id
+    # (для аналізу «CPL до/після зміни»; бюджети Meta віддає в центах)
     events = {}
+    evlog = {}
     dbg = 0
     try:
         for ev in _graph_all("activities", "event_time,event_type,object_id,extra_data",
@@ -1084,7 +1145,7 @@ def fetch_scaling():
                 dbg += 1
             oid = str(ev.get("object_id") or "")
             t = str(ev.get("event_time") or "")
-            if not oid or (oid in events and t <= events[oid]["t"]):
+            if not oid:
                 continue
             old = new = None
             try:
@@ -1096,7 +1157,9 @@ def fetch_scaling():
                 new = _budget_amt(x.get("new_value"))
             except Exception:
                 pass
-            events[oid] = {"t": t, "old": old, "new": new}
+            evlog.setdefault(oid, []).append({"t": t, "old": old, "new": new})
+            if oid not in events or t > events[oid]["t"]:
+                events[oid] = {"t": t, "old": old, "new": new}
     except Exception as e:
         print("  activities FAIL (історія бюджетів недоступна):", str(e)[:120])
     out = []
@@ -1117,11 +1180,131 @@ def fetch_scaling():
             chg = {"date": ldt.date().isoformat() if ldt else str(ev["t"])[:10],
                    "time": ldt.strftime("%H:%M") if ldt else None,
                    "from": ev["old"], "to": ev["new"]}
-        out.append({"m": m, "adset": a.get("name"), "campaign": camp.get("name"),
+        out.append({"m": m, "id": str(a.get("id")), "adset": a.get("name"),
+                    "campaign": camp.get("name"),
                     "budget": round(num(b) / 100.0, 2) if num(b) else None,
                     "lvl": lvl, "created": _local_date(a.get("created_time")),
                     "chg": chg})
-    return out
+    return out, evlog
+
+def _dd(s):
+    return "%s.%s" % (s[8:10], s[5:7]) if s and len(str(s)) >= 10 else str(s or "")
+
+def _range_cpl(days, dfrom, dto):
+    """days = {дата: [spend, leads, book]} -> (spend, leads, cpl) за діапазон дат."""
+    sp = sum(v[0] for d, v in days.items() if dfrom <= d <= dto)
+    ld = sum(v[1] for d, v in days.items() if dfrom <= d <= dto)
+    return round(sp, 2), ld, (round(sp / ld, 2) if ld else None)
+
+def build_lifecycle(out):
+    """Життєвий цикл кожного активного ад-сета з бюджетом: вік, днів на поточному
+    бюджеті, CPL за 3/7 днів, CPL ДО і ПІСЛЯ останньої зміни бюджету (з adsHist)
+    і ВЕРДИКТ масштабування. Рахується один раз тут — сайт і Telegram-бриф лише
+    показують, щоб рекомендації ніде не розходились."""
+    sc = out.get("scaling"); hist = out.get("adsHist") or {}
+    if not sc:
+        return None
+    td = datetime.date.fromisoformat(TODAY)
+    d3s = (td - datetime.timedelta(days=2)).isoformat()
+    d7s = (td - datetime.timedelta(days=6)).isoformat()
+    # базова лінія для нових РК: CPL менеджера за останні 7 днів
+    mcpl = {}
+    for m, node in out["managers"].items():
+        sp = ld = 0
+        for i, d in enumerate(node.get("dates") or []):
+            if d >= d7s:
+                sp += (node["spend"][i] or 0); ld += (node["leads"][i] or 0)
+        mcpl[m] = round(sp / ld, 2) if ld else None
+    _key = lambda a: (a.get("m"), a.get("campaign"), a.get("adset"))
+    d7map = {_key(a): a for a in (out.get("adsets", {}).get("d7") or [])}
+    momap = {_key(a): a for a in (out.get("adsets", {}).get("month") or [])}
+    # запобіжник атрибуції: якщо на ад-сети менеджера сіло <60% його записів за
+    # 7 днів (сира вкладка відстає) — адсет-CPA завищена, вердикти по CPA не робимо
+    as_bk7 = {}
+    for a in (out.get("adsets", {}).get("d7") or []):
+        as_bk7[a["m"]] = as_bk7.get(a["m"], 0) + (a.get("book") or 0)
+    def _unrel(m):
+        c = out["managers"].get(m, {}).get("bookings7d") or 0
+        return c >= 5 and as_bk7.get(m, 0) < c * 0.6
+    res = []
+    for s in sc:
+        m = s["m"]; aid = str(s.get("id") or "")
+        h = (hist.get(aid) or {}).get("days") or {}
+        a7 = d7map.get(_key(s)); amo = momap.get(_key(s))
+        chk = (check_usd_node(m) or {}).get("usd")
+        created = s.get("created")
+        chg = s.get("chg") or None
+        chg_date = (chg or {}).get("date")
+        if chg_date and created and chg_date < created:
+            chg_date = None                 # подія старша за ад-сет — не його
+        since = chg_date or created
+        age = ((td - datetime.date.fromisoformat(created)).days + 1) if created else None
+        days_at = (td - datetime.date.fromisoformat(since)).days if since else None
+        sp3, ld3, cpl3 = _range_cpl(h, d3s, TODAY)
+        sp7h, ld7, cpl7 = _range_cpl(h, d7s, TODAY)
+        cplB = cplA = None; ldB = ldA = 0
+        if chg_date:
+            _cd = datetime.date.fromisoformat(chg_date)
+            _, ldB, cplB = _range_cpl(h, (_cd - datetime.timedelta(days=7)).isoformat(),
+                                      (_cd - datetime.timedelta(days=1)).isoformat())
+            _, ldA, cplA = _range_cpl(h, chg_date, TODAY)
+        unrel = _unrel(m)
+        freq = (a7 or {}).get("freq")
+        book7 = None if unrel else (a7 or {}).get("book")
+        cpa7 = None if unrel else (a7 or {}).get("cpa")
+        cpaM = None if unrel else (amo or {}).get("cpa")
+        cplM = (amo or {}).get("cpl")
+        spend7 = (a7 or {}).get("spend") if a7 else sp7h
+        budget = s.get("budget") or 0
+        base = mcpl.get(m)
+        up = ("$%.0f -> $%.2f–$%.2f/день" % (budget, budget * 1.25, budget * 1.3)) if budget else "+20–30%"
+        # ---- вердикт: смерть -> деградація -> нова -> черга/частота -> дорого -> масштабуй
+        if str(m).startswith("Инста"):
+            v = ("inst", "g", "можна обережно +20%: контролюй Direct")
+        elif age is not None and age <= 3:
+            if ld3 == 0 and sp3 >= 2 * (budget or 10):
+                v = ("new_dead", "r", "нова РК: $%.0f за %d дн. і 0 лідів — вимкни або перезбери" % (sp3, age))
+            elif cpl3 is not None and base and cpl3 <= base * 1.2:
+                v = ("new_ok", "g", "нова РК працює: CPL $%.2f (норма менеджера $%.2f) — хай вчиться" % (cpl3, base))
+            elif cpl3 is not None and base and cpl3 > base * 1.5 and sp3 >= (budget or 10):
+                v = ("new_costly", "y", "нова РК: CPL $%.2f проти $%.2f у менеджера — дорого, глянь завтра" % (cpl3, base))
+            else:
+                v = ("new_test", "y", "нова РК (%d дн.) — ще тест, не чіпай" % (age or 0))
+        elif (chg_date and days_at is not None and days_at >= 2 and ldA >= 5
+              and cplB is not None and cplA is not None and cplA >= cplB * 1.4):
+            _amt = (" ($%.0f -> $%.0f, %s)" % (chg["from"], chg["to"], _dd(chg_date))
+                    if (chg or {}).get("from") and (chg or {}).get("to") else " (%s)" % _dd(chg_date))
+            v = ("degrade", "r", "CPL виріс після зміни бюджету%s: $%.2f -> $%.2f — відкоти або дублюй на $10" % (_amt, cplB, cplA))
+        elif days_at is not None and days_at < 2:
+            v = ("wait", "y", "остання зміна %s — зачекай 2 повні дні" % _dd(since))
+        elif freq is not None and freq >= 2.2:
+            v = ("freq", "y", "частота %.1f — спершу свіжий креатив" % freq)
+        elif (spend7 or 0) >= 25 and book7 == 0:
+            v = ("no_book", "r", "$%.0f за 7 днів і 0 записів — не масштабуй" % (spend7 or 0))
+        elif chk and cpa7 is not None and cpa7 >= chk * 0.25:
+            v = ("cpa_high", "r", "запис $%.2f — ≥25%% чека, спершу здешевити" % cpa7)
+        elif chk and cpa7 is not None and cpa7 >= chk * 0.15:
+            v = ("cpa_warn", "y", "запис $%.2f — дорожче 15%% чека, не масштабуй" % cpa7)
+        elif cpl7 is not None and cplM is not None and cpl7 >= cplM * 1.3:
+            v = ("cpl_grow", "y", "CPL росте: $%.2f (7д) проти $%.2f (місяць) — онови креатив, не бюджет" % (cpl7, cplM))
+        elif (chg_date and cplB is not None and cplA is not None and ldA >= 5
+              and cplA <= cplB * 1.15 and cpa7 is not None and (book7 or 0) >= 2):
+            v = ("holds", "g", "тримає після зміни (CPL $%.2f -> $%.2f) — можна ще %s" % (cplB, cplA, up))
+        elif cpa7 is not None and (book7 or 0) >= 2:
+            v = ("scale_ok", "g", "можна %s" % up)
+        else:
+            v = ("few_data", "y", "мало записів для висновку — не чіпай")
+        res.append({"m": m, "id": aid, "adset": s["adset"], "campaign": s.get("campaign"),
+                    "budget": s.get("budget"), "lvl": s.get("lvl"),
+                    "created": created, "age": age, "chg": chg if chg_date else None,
+                    "since": since, "daysAt": days_at,
+                    "spend3": sp3, "leads3": ld3, "cpl3": cpl3,
+                    "spend7": round(spend7 or 0, 2), "cpl7": cpl7, "cplM": cplM,
+                    "cplBefore": cplB, "cplAfter": cplA, "leadsAfter": ldA,
+                    "freq": freq, "book7": book7, "cpa7": cpa7, "cpaM": cpaM,
+                    "unrel": unrel,
+                    "verdict": {"code": v[0], "cls": v[1], "text": v[2]}})
+    return res
 
 # ---------------- MAIN ----------------
 def main():
@@ -1257,6 +1440,7 @@ def main():
                 node = out["managers"][m]
                 node["bookings"] = v["bookings"]
                 node["bookings7d"] = v["bookings7d"]
+                node["bookings3d"] = v.get("bookings3d", 0)
                 node["bookings1d"] = v["bookings1d"]
                 node["bookingsYest"] = v["bookingsYest"]
                 node["bookingsMonth"] = v["bookingsMonth"]
@@ -1314,7 +1498,7 @@ def main():
         node = out["managers"].get(m)
         if node is None:
             continue
-        tot = b7 = bY = bM = bPM = b1 = 0
+        tot = b7 = b3 = bY = bM = bPM = b1 = 0
         _ms = _td.replace(day=1); _pms = (_ms - datetime.timedelta(days=1)).replace(day=1)
         for ds, v in days.items():
             b = int(v.get("b", 0))
@@ -1323,22 +1507,24 @@ def main():
             cd = datetime.date.fromisoformat(ds)
             tot += b
             if 0 <= (_td - cd).days < 7: b7 += b
+            if 0 <= (_td - cd).days < 3: b3 += b
             if cd == _td - datetime.timedelta(days=1): bY += b
             if cd >= _ms: bM += b
             if _pms <= cd < _ms: bPM += b
             if cd == _td: b1 += b
-        node["bookings"] = tot; node["bookings7d"] = b7; node["bookingsYest"] = bY
+        node["bookings"] = tot; node["bookings7d"] = b7; node["bookings3d"] = b3; node["bookingsYest"] = bY
         node["bookingsMonth"] = bM; node["bookingsPrevMonth"] = bPM
         node["bookings1d"] = b1; node["bookingsToday"] = b1
 
     # --- Meta-метрики по періодах (CTR / CPM / частота) + ад-сети й креативи по періодах ---
     td = datetime.date.fromisoformat(TODAY)
     yest_s = (td - datetime.timedelta(days=1)).isoformat()
+    d3from = (td - datetime.timedelta(days=2)).isoformat()
     d7from = (td - datetime.timedelta(days=6)).isoformat()
     mstart = td.replace(day=1).isoformat()
     _pme = td.replace(day=1) - datetime.timedelta(days=1)   # попередній календарний місяць
     _pms = _pme.replace(day=1)
-    PERIODS = {"yest": (yest_s, yest_s), "d7": (d7from, TODAY),
+    PERIODS = {"yest": (yest_s, yest_s), "d3": (d3from, TODAY), "d7": (d7from, TODAY),
                "month": (mstart, TODAY),
                "pmonth": (_pms.isoformat(), _pme.isoformat()),
                "all": (DATE_FROM, TODAY)}
@@ -1445,6 +1631,18 @@ def main():
     except Exception as e:
         print("adsets failed:", e)
 
+    # ---- щоденна історія ад-сетів (adsHist) — фундамент аналітики масштабування ----
+    try:
+        ah = build_adset_hist(cur, bk, raw_map, raw_ok)
+        if ah is not None:
+            out["adsHist"] = ah
+            print("adsHist: %d ад-сетів, %d днів-рядків"
+                  % (len(ah), sum(len(v["days"]) for v in ah.values())))
+        else:
+            print("adsHist: Meta нічого не віддала -> стара історія лишилась")
+    except Exception as e:
+        print("adsHist failed -> carrying over:", str(e)[:150])
+
     # ---- Журнал вимкнень (_offLog): що зникло з активних + метрики й авто-причина
     # на момент вимкнення. Для місячного звіту «що вимкнено і чому». ----
     if META_TOKEN:
@@ -1487,11 +1685,38 @@ def main():
     try:
         sc = fetch_scaling()
         if sc is not None:
-            out["scaling"] = sc
+            sc_rows, evlog = sc
+            out["scaling"] = sc_rows
             print("scaling: %d активних ад-сетів, історія змін є для %d"
-                  % (len(sc), sum(1 for x in sc if x["chg"])))
+                  % (len(sc_rows), sum(1 for x in sc_rows if x["chg"])))
+            # budgetLog: ПОВНА історія змін бюджету по object_id (журнал Meta зливаємо
+            # зі збереженим — Meta може підрізати старі події). Час — пояс кабінету.
+            blog = out.get("budgetLog") or {}
+            for oid, evs in evlog.items():
+                merged = {e["t"]: e for e in (blog.get(oid) or [])}
+                for e in evs:
+                    ldt = _activity_local_dt(e["t"])
+                    merged[e["t"]] = {"t": e["t"],
+                                      "date": ldt.date().isoformat() if ldt else str(e["t"])[:10],
+                                      "time": ldt.strftime("%H:%M") if ldt else None,
+                                      "from": e["old"], "to": e["new"]}
+                blog[oid] = sorted(merged.values(), key=lambda x: x["t"])[-30:]
+            out["budgetLog"] = blog
+            print("budgetLog: %d обʼєктів, %d подій"
+                  % (len(blog), sum(len(v) for v in blog.values())))
     except Exception as e:
         print("scaling failed -> carrying over:", str(e)[:150])
+
+    # ---- життєвий цикл ад-сетів: вердикти масштабування (сайт + Telegram-бриф) ----
+    try:
+        lc = build_lifecycle(out)
+        if lc is not None:
+            out["lifecycle"] = lc
+            print("lifecycle: %d рядків | %s" % (len(lc), ", ".join(
+                "%s:%d" % (c, sum(1 for r in lc if r["verdict"]["code"] == c))
+                for c in sorted({r["verdict"]["code"] for r in lc}))))
+    except Exception as e:
+        print("lifecycle failed -> carrying over:", str(e)[:150])
 
     # recompute cpa/conv from (possibly updated) bookings + fresh spend/leads
     for m, node in out["managers"].items():
