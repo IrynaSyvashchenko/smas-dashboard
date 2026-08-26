@@ -22,9 +22,19 @@ def _get(url):
 
 def send(text):
     url = "https://api.telegram.org/bot%s/sendMessage" % TOKEN
-    data = urllib.parse.urlencode({"chat_id": CHAT_ID, "text": text,
-                                   "disable_web_page_preview": "true"}).encode("utf-8")
-    urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30).read()
+    # Telegram ріже повідомлення на 4096 символів — довгий бриф шлемо частинами по рядках
+    parts, buf = [], ""
+    for ln in text.split("\n"):
+        if len(buf) + len(ln) + 1 > 3900:
+            parts.append(buf); buf = ln
+        else:
+            buf = (buf + "\n" + ln) if buf else ln
+    if buf:
+        parts.append(buf)
+    for p in parts:
+        data = urllib.parse.urlencode({"chat_id": CHAT_ID, "text": p,
+                                       "disable_web_page_preview": "true"}).encode("utf-8")
+        urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30).read()
 
 def build(d):
     upd = d["updated"]
@@ -126,30 +136,83 @@ def build(d):
             continue
         if c.get("freq") is not None and c["freq"] >= 2.5:
             al.append("• Креатив %s (%s): частота %.2f — вигорів" % (c["name"], c["m"], c["freq"]))
+    # алерти ДИНАМІКИ з життєвого циклу (рахує пайплайн, та сама логіка, що на сайті):
+    # CPL зламався після зміни бюджету / нова РК горить без лідів
+    LC = d.get("lifecycle") or []
+    for r in LC:
+        v = r.get("verdict") or {}
+        if v.get("code") == "degrade":
+            al.append("• %s (%s): %s" % (r["adset"], r["m"], v.get("text")))
+        elif v.get("code") == "new_dead" and r["adset"] not in dead:
+            al.append("• %s (%s): %s" % (r["adset"], r["m"], v.get("text")))
     L.append("")
     if al:
         L.append("🔴 Потребує уваги:"); L += al
     else:
         L.append("✅ Все спокійно: гроші без лідів не горять, записи не задорогі.")
 
-    d7map = {(a["m"], a["adset"]): a for a in (d.get("adsets", {}).get("d7") or [])}
-    sc = []
-    for s in (d.get("scaling") or []):
-        if str(s["m"]).startswith("Инста"):
+    _dd = lambda s: "%s.%s" % (s[8:10], s[5:7]) if s and len(str(s)) >= 10 else "?"
+
+    # 🆕 нові РК (≤3 днів): швидкий пульс — працює / дорого / рано судити
+    news = []
+    for r in LC:
+        code = str((r.get("verdict") or {}).get("code") or "")
+        if not code.startswith("new"):
             continue
-        since = (s.get("chg") or {}).get("date") or s.get("created")
-        if not since or (today - datetime.date.fromisoformat(since)).days < 2:
+        cpl = r.get("cpl3")
+        icon = {"new_ok": "✅", "new_costly": "⚠️", "new_dead": "🔴"}.get(code, "⏳")
+        news.append("%s %s (%s): $%.0f/д · %d дн. · CPL %s" % (
+            icon, r["adset"], r["m"], r.get("budget") or 0, r.get("age") or 0,
+            ("$%.2f" % cpl) if cpl is not None else "—"))
+    if news:
+        L.append(""); L.append("🆕 Нові РК:"); L += news
+
+    # 📈 масштабовані за останній тиждень: тримає чи деградує (CPL до → після)
+    chgd = []
+    for r in LC:
+        ch = r.get("chg") or {}
+        if not ch.get("date") or (r.get("age") or 99) <= 3:
             continue
-        a = d7map.get((s["m"], s["adset"]))
-        if not a or (a.get("book") or 0) < 2:
+        try:
+            if (today - datetime.date.fromisoformat(ch["date"])).days > 7:
+                continue
+        except Exception:
             continue
-        if a.get("freq") is not None and a["freq"] >= 2.2:
-            continue
-        ck, cp = chk(s["m"]), a.get("cpa")
-        if ck and cp is not None and cp >= ck * 0.15:
-            continue
-        b = s.get("budget") or 0
-        sc.append("• %s (%s): $%.0f → $%.2f" % (s["adset"], s["m"], b, b * 1.25))
+        b_, a_ = r.get("cplBefore"), r.get("cplAfter")
+        code = (r.get("verdict") or {}).get("code")
+        icon = "🔴" if code == "degrade" else ("✅" if (b_ and a_ and a_ <= b_ * 1.15) else "⏳")
+        amt = " $%.0f→$%.0f" % (ch["from"], ch["to"]) if ch.get("from") and ch.get("to") else ""
+        chgd.append("%s %s (%s):%s %s · CPL %s → %s" % (
+            icon, r["adset"], r["m"], amt, _dd(ch["date"]),
+            ("$%.2f" % b_) if b_ is not None else "—",
+            ("$%.2f" % a_) if a_ is not None else "—"))
+    if chgd:
+        L.append(""); L.append("📈 Після зміни бюджету (7 дн.):"); L += chgd
+
+    # 🚀 можна масштабувати: вердикти пайплайну (та сама логіка, що на сайті);
+    # без lifecycle (старий data.json) — стара локальна формула
+    if LC:
+        sc = ["• %s (%s): %s" % (r["adset"], r["m"], (r.get("verdict") or {}).get("text"))
+              for r in LC if (r.get("verdict") or {}).get("code") in ("scale_ok", "holds")]
+    else:
+        d7map = {(a["m"], a["adset"]): a for a in (d.get("adsets", {}).get("d7") or [])}
+        sc = []
+        for s in (d.get("scaling") or []):
+            if str(s["m"]).startswith("Инста"):
+                continue
+            since = (s.get("chg") or {}).get("date") or s.get("created")
+            if not since or (today - datetime.date.fromisoformat(since)).days < 2:
+                continue
+            a = d7map.get((s["m"], s["adset"]))
+            if not a or (a.get("book") or 0) < 2:
+                continue
+            if a.get("freq") is not None and a["freq"] >= 2.2:
+                continue
+            ck, cp = chk(s["m"]), a.get("cpa")
+            if ck and cp is not None and cp >= ck * 0.15:
+                continue
+            b = s.get("budget") or 0
+            sc.append("• %s (%s): $%.0f → $%.2f" % (s["adset"], s["m"], b, b * 1.25))
     if sc:
         L.append(""); L.append("🚀 Можна масштабувати сьогодні:"); L += sc
 
