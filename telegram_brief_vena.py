@@ -49,21 +49,19 @@ def build(d):
             continue
         sp = n["spend"][i] or 0; ld = n["leads"][i] or 0
         bk = n.get("bookingsYest") or 0
-        bad = ((n.get("q") or {}).get("yest") or {}).get("bad") or 0
         if sp <= 0 and ld <= 0 and not bk:
             continue
         tsp += sp; tld += ld; tbk += bk
-        rows.append((m, sp, ld, bk, bad))
+        rows.append((m, sp, ld, bk))
     rows.sort(key=lambda r: -r[1])
 
     cpa = ("$%.2f" % (tsp / tbk)) if tbk else "—"
     L = ["🦷 Кабінет ad5 за вчора (%s)" % rday.strftime("%d.%m"),
          "Разом: $%.0f · %d лідів · %d записів · CPA %s" % (tsp, tld, tbk, cpa), ""]
-    for m, sp, ld, bk, bad in rows:
-        line = "%s: $%.0f · %d л · %d з" % (m, sp, ld, bk)
-        if bad:
-            line += " · %d неяк." % bad
-        L.append(line)
+    for m, sp, ld, bk in rows:
+        cpl = (" (лід $%.2f)" % (sp / ld)) if ld else ""
+        cpb = (" (запис $%.2f)" % (sp / bk)) if bk else ""
+        L.append("%s: $%.0f · %d л%s · %d з%s" % (m, sp, ld, cpl, bk, cpb))
 
     def days_live(m):
         s = M.get(m, {}).get("start")
