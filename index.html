@@ -483,6 +483,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         const bR=q?pct(q.bad,q.leads):null, nR=q?pct(q.noresp,q.leads):null;
         const bcls=bR==null?'':(bR>=20?'r':bR>=10?'y':'g');
         const ncls=nR==null?'':(nR>=40?'r':nR>=25?'y':'g');
+        // покриття прив'язки: скільки лідів періоду знайшлося в сирих вкладках.
+        // <60% (при ≥10 лідах) = записи НЕДОРАХОВАНІ, CPA завищена — глушимо цифру
+        const cov=(q&&a.leads)?q.leads/a.leads:null;
+        const low=cov!=null&&cov<0.6&&a.leads>=10&&!ii;
+        const covTip=low?`Прив'язано лише ${q.leads} зі ${a.leads} лідів періоду (${Math.round(cov*100)}%) — записи недораховані, реальна CPA НИЖЧА. Дивись вкладку «7 днів».`:'';
         const of=offerInfo(a);
         asb.insertAdjacentHTML('beforeend',`<tr class="${ia?'inact ':''}${of?'offer':''}">
           <td>${a.adset}${of?`<span class="oftag" title="Інший оффер: ${of.o} € замість ${of.b} €">${of.o} €</span>`:''}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
@@ -491,8 +496,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
           <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
           <td>${ii?'—':bR==null?'—*':`<span class="tag ${bcls}">${q.bad} · ${bR}%</span>`}</td>
           <td>${ii?'—':nR==null?'—*':`<span class="tag ${ncls}">${q.noresp} · ${nR}%</span>`}</td>
-          <td>${ii?'—':a.book==null?'—*':a.book}</td>
-          <td>${ii?'—':a.book==null?'—*':fmt(a.cpa)}</td></tr>`);
+          <td>${ii?'—':a.book==null?'—*':low?`<span style="color:var(--mut)" title="${covTip}">≥ ${a.book} ‡</span>`:a.book}</td>
+          <td>${ii?'—':a.book==null?'—*':low?`<span style="color:var(--mut)" title="${covTip}">${fmt(a.cpa)} ‡</span>`:fmt(a.cpa)}</td></tr>`);
       }
     }
     const notes=[];
@@ -503,7 +508,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     if(ofs.length) notes.push(`Фіолетовим виділено ад-сети з ІНШИМ оффером (${ofs.join(' €, ')} €) — у них інша ціна, тому CPL і CPA не порівнюються напряму з рештою рядків менеджера. `);
     if(list.some(a=>isInst(a.m))) notes.push('Инста-кампанії: ліди йдуть у Direct, тому тут лише витрати/CTR/частота (ліди й записи — на картці «Инста…»). ');
     const asMiss=[...new Set(list.filter(a=>!a.q&&!isInst(a.m)).map(a=>a.m))];
-    if(asMiss.length) notes.push(`* Якість і записи по ад-сетах поки недоступні для: ${asMiss.join(', ')} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
+    if(asMiss.length) notes.push(`* «—*» = жоден лід періоду ще не знайшовся в сирій вкладці (${asMiss.join(', ')}) — свіжі ліди доїжджають туди з лагом 1–3 дні, тому на коротких вкладках («Вчора», «3 дні») зірочок більше. Підтягнеться саме. `);
+    {const lows=[...new Set(list.filter(a=>{const q=a.q;const c=(q&&a.leads)?q.leads/a.leads:null;return c!=null&&c<0.6&&a.leads>=10&&!isInst(a.m);}).map(a=>a.m))];
+     if(lows.length) notes.push(`‡ Сіра цифра з «‡» = прив'язано МЕНШЕ 60% лідів періоду (${lows.join(', ')}): сирі вкладки покривають не всю історію, записи недораховані — реальних записів більше, а CPA НИЖЧА за показану. Для рішень дивись «7 днів», там прив'язка свіжа. `);}
     if(list.some(a=>!isInst(a.m))) notes.push('Записи прив\'язуються до ад-сета по adset_id ліда (не по назві). Свіжі записи можуть доганяти з лагом 1–5 днів, тому за останні дні CPA ще може трохи мінятись. ');
     // хто зараз без атрибуції: у менеджера є записи, але на ад-сети вони не сідають
     // (сира вкладка з ad_id/adset_id застаріла — ліди пишуться в нову)
