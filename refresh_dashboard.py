@@ -1400,7 +1400,7 @@ def main():
     out = json.loads(json.dumps(cur))
     out["updated"] = datetime.datetime.now(TZ).replace(microsecond=0).isoformat()
     out["metaSource"] = META_SOURCE["used"]   # graph | windsor — видно в шапці сайту
-    out["periodNote"] = "оновлюється кожні 2 год з 7:00 до 19:00 + о 22:00 за Прагою (вночі пауза)"
+    out["periodNote"] = "оновлюється кожні 2 год ~7:25–19:25 + ~22:25 за Прагою (вночі пауза)"
     out["factBookings"] = FACT_BOOKINGS   # факт адміністратора -> вкладка «<Місяць> (факт)»
 
     # ---- Кампанійний зріз (для місячного звіту керівництву): дати запуску/зупинки,
