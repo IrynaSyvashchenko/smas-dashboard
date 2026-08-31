@@ -41,10 +41,12 @@ LEAD_KW = {
     "Стомат Київ": ("stomatologia", "viniry", "vinir", "стомат", "quiz"),
     "Відень":      ("vienna", "wien", "відень", "вена"),
     "Тернопіль":   ("ternopil", "тернопіл"),
+    # Харків ПЕРЕД «СМАС Київ»: «31.08_Kharkiv_smas» містить і kharkiv, і smas
+    "СМАС Харків": ("kharkiv", "kharkov", "харків", "харьков"),
     "СМАС Київ":   ("smas", "смас"),
 }
 CITY_OF = {"Стомат Київ": "Київ", "Стомат Квіз": "Київ", "Відень": "Відень",
-           "Тернопіль": "Тернопіль", "СМАС Київ": "Київ"}
+           "Тернопіль": "Тернопіль", "СМАС Київ": "Київ", "СМАС Харків": "Харків"}
 
 # ---- Google-таблиця «Лиды Анна Олеговна» ----------------------------------
 SHEET_ID = "1RdXP96bS0e6UPnPrkql4z4n21cNV7FbMuk6fdWYHnPA"
@@ -56,7 +58,9 @@ MANAGER_SHEET = {"Стомат Київ": ["Стомат Ирина"],
                  "Стомат Квіз": ["Стомат Квиз Ирина"],
                  "Відень":      ["Вена Ирина"],
                  "СМАС Київ":   ["Smas Киев"],
-                 "Тернопіль":   ["Smas Тернополь"]}
+                 "Тернопіль":   ["Smas Тернополь"],
+                 # вкладки ще нема (РК стартувала 31.08) — кандидати, неіснуючі читаються м'яко
+                 "СМАС Харків": ["Smas Харьков", "Smas Харків"]}
 RAW_SHEETS    = ["fbS", "fbV",
                  # кандидати «на виріст» — неіснуючі просто не прочитаються (м'яко)
                  "fbS2", "fbV2", "fbT", "fbK", "fb1", "fb2"]
@@ -68,7 +72,8 @@ AVG_CHECK = {"Стомат Київ": (39990, "UAH"),
              "Стомат Квіз": (39990, "UAH"),
              "Відень":      (149,   "EUR"),
              "СМАС Київ":   (2499,  "UAH"),
-             "Тернопіль":   (2499,  "UAH")}
+             "Тернопіль":   (2499,  "UAH"),
+             "СМАС Харків": (2499,  "UAH")}
 
 def check_usd_node(m):
     v = AVG_CHECK.get(m)
@@ -367,6 +372,20 @@ def fetch_raw_index():
         print("  квіз-вкладка ->", str(e)[:60])
     return idx, stats
 
+def _book_kind(r):
+    """Тип запису зі статусу: «Запись консультация» -> kons, «Запись установка» -> inst.
+    Викликається лише для лідів, що вже пройшли is_booked(). Запис без типу -> None
+    (рахується в записах загалом, але не в розбивці)."""
+    for sf in ("статус", "статус_", "lead_status"):
+        s = str(r.get(sf) or "").lower()
+        if "запис" not in s:
+            continue
+        if "установ" in s:
+            return "inst"
+        if "конс" in s:
+            return "kons"
+    return None
+
 def _tally_manager(rows, today, raw_idx):
     """Метрики однієї CRM-вкладки. Лід Ірини = created_time >= DATE_FROM
     (з рядка або з сирої вкладки по телефону). Без дати = не її, не рахуємо."""
@@ -387,6 +406,8 @@ def _tally_manager(rows, today, raw_idx):
     bY = bM = bPM = 0
     old_keys, booked_keys = [], []
     Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "pmonth", "all")}
+    K = {p: 0 for p in ("yest", "d7", "month", "pmonth", "all")}   # записи на консультацію
+    I = {p: 0 for p in ("yest", "d7", "month", "pmonth", "all")}   # записи на установку
     leadsQ = []
     for (ph, ct), (r, _) in seen.items():
         if not ct or ct < DATE_FROM:
@@ -405,10 +426,13 @@ def _tally_manager(rows, today, raw_idx):
             if 0 <= (today - cd).days < 7: buckets.append("d7")
             if cd >= month_start: buckets.append("month")
             if pm_start <= cd < month_start: buckets.append("pmonth")
+        bkind = _book_kind(r) if bk else None
         for p in buckets:
             Q[p]["leads"] += 1
             if bd: Q[p]["bad"] += 1
             if nr: Q[p]["noresp"] += 1
+            if bkind == "kons": K[p] += 1
+            elif bkind == "inst": I[p] += 1
         leadsQ.append({"ph": ph, "cd": cd.isoformat() if cd else "", "bk": bk, "bad": bd, "nr": nr})
         if bk:
             booked += 1
@@ -427,6 +451,7 @@ def _tally_manager(rows, today, raw_idx):
     return {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
             "bookingsYest": bY, "bookingsMonth": bM, "bookingsPrevMonth": bPM,
             "leads_seen": leads, "old_keys": old_keys, "q": Q,
+            "kons": K, "inst": I,
             "leadsQ": leadsQ, "booked_keys": booked_keys}
 
 def compute_bookings(raw_idx):
@@ -671,15 +696,22 @@ def main():
         cur = {"managers": {}}
     cur.setdefault("managers", {})
 
-    # вузли напрямків: створюємо, коли напрямок з'явився в кампаніях кабінету
-    seen_dirs = set()
+    # вузли напрямків: створюємо, коли напрямок з'явився в кампаніях кабінету;
+    # start нового вузла = перший день з витратами (щоб не тягнути хвіст нулів з 15.08
+    # і щоб алерти брифа не вважали свіжий напрямок старим)
+    seen_dirs = set(); first_sp = {}
     for r in (rows or []):
         kind, m = classify_row(r.get("campaign"), r.get("adset_name"))
-        if m: seen_dirs.add(m)
+        if not m: continue
+        seen_dirs.add(m)
+        if num(r.get("spend")) > 0:
+            d = str(r.get("date"))[:10]
+            if d and (m not in first_sp or d < first_sp[m]):
+                first_sp[m] = d
     for m in seen_dirs:
         if m not in cur["managers"]:
-            cur["managers"][m] = {"city": CITY_OF.get(m, ""), "start": DATE_FROM}
-            print("новий напрямок у data.json:", m)
+            cur["managers"][m] = {"city": CITY_OF.get(m, ""), "start": first_sp.get(m) or DATE_FROM}
+            print("новий напрямок у data.json:", m, "start", cur["managers"][m]["start"])
 
     out = json.loads(json.dumps(cur))
     out["updated"] = datetime.datetime.now(TZ).replace(microsecond=0).isoformat()
@@ -762,6 +794,8 @@ def main():
             node["bookingsMonth"] = v["bookingsMonth"]
             node["bookingsPrevMonth"] = v.get("bookingsPrevMonth", 0)
             node["q"] = v["q"]
+            node["kons"] = v.get("kons")   # записи-консультації по періодах (дата ліда)
+            node["inst"] = v.get("inst")   # записи-установки по періодах (дата ліда)
             _bd = {}
             for L in v.get("leadsQ", []):
                 if L.get("bk") and L.get("cd"):
