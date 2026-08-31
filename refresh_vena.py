@@ -2,7 +2,7 @@
 """
 Дашборд №2: кабінет ad5 (act_1483053046124984) — Стомат Київ (вініри) + СМАС Відень
 (+ майбутні СМАС Київ / Тернопіль). Окремий конвеєр, той самий принцип, що й
-refresh_dashboard.py: Meta Graph API (METAТОКЕN) + Google-таблиця «Лиды Анна Олеговна»
+refresh_dashboard.py: Meta Graph API (METAТОКEN) + Google-таблиця «Лиды Анна Олеговна»
 через Apps Script-міст. Пише vena/data.json.
 
 Ірина працює з цим кабінетом З 15.08.2026 — ліди/записи до цієї дати належать
@@ -184,6 +184,22 @@ def classify_row(campaign, adset=None):
     if _is_quiz_adset(adset):
         return ("lead", "Стомат Квіз")
     return classify(campaign)
+
+def _name_date(name):
+    """Датний префікс «dd.mm_» у назві адсета/оголошення -> 'mm-dd' (порівнюване в межах року)."""
+    mt = re.match(r"\s*(\d{1,2})\.(\d{1,2})[._ ]", str(name or ""))
+    return "%02d-%02d" % (int(mt.group(2)), int(mt.group(1))) if mt else None
+
+def _pick_by_date(cands, name_of, cd):
+    """Коли квіз-адсетів/оголошень кілька (старий вимкнений + новий), а UTM назву не дала:
+    беремо той, що вже існував на дату ліда — найпізніший датний префікс назви <= дати ліда."""
+    md = cd[5:10] if cd and len(cd) >= 10 else ""
+    best, bd = None, ""
+    for aid in cands:
+        d = _name_date(name_of(aid))
+        if d and md and d <= md and d > bd:
+            best, bd = aid, d
+    return best
 
 def fetch_meta():
     """Денні spend/leads по кампаніях. None = Meta недоступна (старі дані лишаються)."""
@@ -458,10 +474,20 @@ def build_adsets(periods, bk, raw_map):
             a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
             a["imp"] += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
             a["reach"] += num(r.get("reach"))
-        # квіз-ліди без adset_id: садимо на єдиний квіз-адсет (по «quiz» у назві)
-        quiz_aids = [a_id for a_id, a_ in agg.items()
-                     if "quiz" in str(a_.get("adset") or "").lower()]
-        quiz_aid = quiz_aids[0] if len(quiz_aids) == 1 else None
+        # квіз-ліди без adset_id: спершу по назві адсета з UTM (utm_term), далі —
+        # єдиний квіз-адсет, а якщо їх кілька (старий вимкнений + новий) — по даті
+        # ліда проти датного префікса назви (18.08_... / 31.08_...)
+        quiz_ids = {a_id: str(a_.get("adset") or "") for a_id, a_ in agg.items()
+                    if "quiz" in str(a_.get("adset") or "").lower()}
+        def _quiz_adset(hit, cd):
+            want = str(hit.get("adset") or "").strip().lower()
+            if want:
+                for a_id, nm in quiz_ids.items():
+                    if nm.strip().lower() == want:
+                        return a_id
+            if len(quiz_ids) == 1:
+                return next(iter(quiz_ids))
+            return _pick_by_date(list(quiz_ids), lambda a: quiz_ids[a], cd)
         qmap = {}
         for mgr in (bk or {}):
             for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
@@ -470,7 +496,7 @@ def build_adsets(periods, bk, raw_map):
                 hit = raw_map.get(L["ph"])
                 if not hit:
                     continue
-                aid_h = hit["adset_id"] or (quiz_aid if hit.get("quiz") else "")
+                aid_h = hit["adset_id"] or (_quiz_adset(hit, L["cd"]) if hit.get("quiz") else "")
                 if not aid_h:
                     continue
                 q = qmap.setdefault(aid_h, {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
@@ -521,12 +547,23 @@ def build_creatives(periods, bk, raw_map):
             a["spend"] += num(r.get("spend")); a["leads"] += int(num(r.get("actions_lead")))
             a["imp"] += num(r.get("impressions")); a["clicks"] += num(r.get("clicks"))
             a["reach"] += num(r.get("reach"))
-        # квіз-ліди: підбираємо оголошення по «quiz» у назві + збігу utm_content
-        def _quiz_ad(hit):
+        # квіз-ліди: підбираємо оголошення по «quiz» у назві + збігу utm_content;
+        # якщо однакове оголошення живе в кількох квіз-адсетах (старий + новий) —
+        # звужуємо по назві адсета з utm_term, далі по даті ліда проти префікса адсета
+        def _quiz_ad(hit, cd):
             want = str(hit.get("ad") or "").lower()
             cands = [a_id for a_id, a_ in agg.items()
                      if "quiz" in str(a_.get("ad") or "").lower()
                      and (not want or want in str(a_.get("ad") or "").lower())]
+            if len(cands) > 1:
+                wantset = str(hit.get("adset") or "").strip().lower()
+                if wantset:
+                    c2 = [a_id for a_id in cands
+                          if str(agg[a_id].get("adset") or "").strip().lower() == wantset]
+                    if c2:
+                        cands = c2
+            if len(cands) > 1:
+                return _pick_by_date(cands, lambda a: agg[a].get("adset"), cd)
             return cands[0] if len(cands) == 1 else None
         bmap = {}
         for mgr in (bk or {}):
@@ -536,7 +573,7 @@ def build_creatives(periods, bk, raw_map):
                 hit = raw_map.get(L["ph"])
                 if not hit:
                     continue
-                aid_h = hit["ad_id"] or (_quiz_ad(hit) if hit.get("quiz") else None)
+                aid_h = hit["ad_id"] or (_quiz_ad(hit, L["cd"]) if hit.get("quiz") else None)
                 if aid_h:
                     bmap[aid_h] = bmap.get(aid_h, 0) + 1
         res = []
