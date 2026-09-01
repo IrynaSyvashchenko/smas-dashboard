@@ -63,7 +63,7 @@ MANAGER_SHEET = {"Стомат Київ": ["Стомат Ирина"],
                  "СМАС Харків": ["Smas Харьков", "Smas Харків"]}
 RAW_SHEETS    = ["fbS", "fbV",
                  # кандидати «на виріст» — неіснуючі просто не прочитаються (м'яко)
-                 "fbS2", "fbV2", "fbT", "fbK", "fb1", "fb2"]
+                 "fbS2", "fbV2", "fbT", "fbK", "fbH", "fbX", "fb1", "fb2"]
 
 # ---- ROAS: середній чек ----------------------------------------------------
 UAH_USD = 0.0239   # ~41.8 грн/$
@@ -807,6 +807,12 @@ def main():
             for kk in booked_set:
                 if kk not in mreg:
                     mreg[kk] = "" if migrate else today_local
+            # інваріант: позначка запису не старіша за лід — запис ліда, створеного
+            # СЬОГОДНІ, рахуємо «сьогоднішнім» навіть при міграції нового напрямку
+            # (інакше в день появи напрямку його записи не видно в смузі «сьогодні»)
+            for kk in list(mreg):
+                if not mreg[kk] and kk.split("|", 1)[-1] == today_local:
+                    mreg[kk] = today_local
             mreg = {kk: d for kk, d in mreg.items() if kk in booked_set}
             new_reg[m] = mreg
             node["bookingsToday"] = sum(1 for d in mreg.values() if d == today_local)
