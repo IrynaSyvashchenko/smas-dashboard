@@ -781,7 +781,10 @@ def main():
         print("BOOKINGS failed -> carrying over:", e); bk = None
     if bk:
         reg = cur.get("_bookReg") or {}
-        today_local = datetime.datetime.now(TZ).date().isoformat()
+        # дата СТАРТУ запуску, не поточний момент: вечірній рефреш стартує ~23:59 і
+        # закінчує читати таблиці вже після півночі — now() тут занулював би
+        # bookingsToday за день, що закривається (бриф 01.09 прийшов з нулями)
+        today_local = TODAY
         new_reg = dict(reg)
         for m, v in bk.items():
             if m not in out["managers"]:
