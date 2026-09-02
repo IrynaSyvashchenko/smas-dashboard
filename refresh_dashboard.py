@@ -96,6 +96,7 @@ def _admin_mgr(name):
     if "максим" in n or "мага" in n:  return "Мага"      # кампанія «Лиды Париж Максим» веде Мага
     if "яна" in n:                    return None        # Яна — менеджер іншого таргетолога
     if "юлиана" in n or "барселона" in n: return "Юлиана"
+    if "вика" in n or "вікa" in n or "vika" in n: return "Вика"   # «Лиды Прага Вика» — НЕ Даша (грабля: серпень рахувався Даші)
     if "прага" in n:                  return "Даша"      # «Лиды Прага» без імені = Даша
     return None
 
