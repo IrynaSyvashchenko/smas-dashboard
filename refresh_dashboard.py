@@ -177,10 +177,34 @@ MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
                "Мага": "1445117368",
                "Вика": (VIKA_SS, "994125991")}
 
-# Додаткові CRM-вкладки менеджера (за НАЗВОЮ): нова РК -> нова вкладка ліда.
-# «Алиса Ирина модель» — ліди 149-ї (модельної) РК Алиси (Ірина, 26.08).
-# Рядки просто доливаються до основної вкладки; дедуп по (телефон, created_time).
-MANAGER_EXTRA_SHEETS = {"Алиса": ("Алиса Ирина модель",)}
+# НОВА таблиця «new Прага и Париж 2026» (з 05.09): менеджери переїхали сюди,
+# але СТАРА ще жива — записи по старих лідах далі проставляються там.
+# Читаємо ОБИДВІ; дублікати (нова = копія старої) дедупляться по (телефон, час),
+# при дублі виграє рядок із записом (див. compute_bookings).
+NEW_SS = "14ExTAs7xK6Dsfe-UxUP-4r3wLJK8Wb0jcCP7PscVq5I"
+
+# Додаткові CRM-вкладки менеджера: рядок = назва вкладки в ГОЛОВНІЙ таблиці,
+# кортеж (ss, gid) = вкладка в іншій таблиці. Рядки доливаються до основної.
+MANAGER_EXTRA_SHEETS = {
+    "Алиса": ("Алиса Ирина модель", (NEW_SS, "1047608348")),   # модельна РК + нова табл.
+    "Диана": ((NEW_SS, "493354310"),),
+    "Даша":  ((NEW_SS, "836776554"),),
+    "Таня":  ((NEW_SS, "1742565478"), (NEW_SS, "2118300075")),  # «Таня Ирина» + «Таня Ирина2»
+    "Саида": ((NEW_SS, "1421384863"),),
+    "Мага":  ((NEW_SS, "2146418607"),),
+}
+
+def _remap_new_row(r):
+    """Празькі вкладки нової таблиці мають «номер»/«дата» замість
+    phone_number/created_time — зводимо до старих ключів, решта коду без змін."""
+    if not str(r.get("phone_number") or "").strip():
+        for k in ("номер", "номер_телефона", "телефон"):
+            if str(r.get(k) or "").strip():
+                r["phone_number"] = r[k]; break
+    if not str(r.get("created_time") or "").strip():
+        if str(r.get("дата") or "").strip():
+            r["created_time"] = r["дата"]
+    return r
 
 def _sheet_args(v):
     """gid або (ss, gid) -> kwargs для fetch_sheet_rows."""
@@ -694,15 +718,25 @@ def compute_bookings(barca_camps=frozenset()):
             rows = fetch_sheet_rows(**_sheet_args(gid))
         except Exception as e:
             print("  sheet FAIL", mgr, gid, "->", e); continue
-        # додаткові CRM-вкладки (нові РК): доливаємо рядки; збій дод. вкладки не
-        # валить основну (дедуп у _tally_manager по телефону+created_time)
+        # додаткові CRM-вкладки (нові РК, нова таблиця): доливаємо рядки; збій
+        # дод. вкладки не валить основну (дедуп у _tally_manager по телефону+часу)
+        rows = list(rows)
         for extra in MANAGER_EXTRA_SHEETS.get(mgr, ()):
             try:
-                add = fetch_sheet_rows(sheet=extra)
-                rows = list(rows) + list(add)
-                print("  дод. CRM-вкладка «%s» (%s): %d рядків" % (extra, mgr, len(add)))
+                if isinstance(extra, (tuple, list)):
+                    ss2, ref = extra
+                    kw = {"ss": ss2, "gid": ref} if str(ref).isdigit() else {"ss": ss2, "sheet": ref}
+                    add = fetch_sheet_rows(**kw)
+                else:
+                    add = fetch_sheet_rows(sheet=extra)
+                rows += [_remap_new_row(dict(r)) for r in add]
+                print("  дод. CRM-вкладка %s (%s): %d рядків" % (extra, mgr, len(add)))
             except Exception as e:
-                print("  дод. CRM-вкладка «%s» FAIL ->" % extra, str(e)[:80])
+                print("  дод. CRM-вкладка %s FAIL ->" % (extra,), str(e)[:80])
+        # той самий лід живе в СТАРІЙ і НОВІЙ таблицях; дедуп лишає ОСТАННІЙ рядок.
+        # Щоб запис, проставлений у будь-якій з копій, не загубився — рядки з
+        # позначкою запису докидаємо в кінець: при дублі виграє забукований.
+        rows += [r for r in rows if is_booked(r)]
         res[mgr] = _tally_manager(rows, today,
                                   lambda r: r.get("phone_number"), _iryna_row)
         _print_mgr(mgr, res[mgr])
@@ -848,6 +882,19 @@ def fetch_raw_map(barca_camps=frozenset()):
             _ingest(fetch_sheet_rows(sheet=name), None, name)
         except Exception as e:
             print("  дод. вкладка", name, "->", str(e)[:60])
+    # НОВА таблиця (з 05.09): її сирі fb-вкладки (fbS, fbMI, fbTI…) читаємо так само;
+    # вони йдуть ПІСЛЯ старих, тож для того самого телефону виграє свіжіша прив'язка
+    try:
+        for t in list_tabs(NEW_SS):
+            if any(w in t.lower() for w in RAW_SKIP_WORDS):
+                continue
+            if RAW_TAB_RE.search(t):
+                try:
+                    _ingest(fetch_sheet_rows(ss=NEW_SS, sheet=t), None, "new:" + t)
+                except Exception as e:
+                    print("  нова сира вкладка", t, "->", str(e)[:60])
+    except Exception as e:
+        print("  нова таблиця: список вкладок FAIL ->", str(e)[:80])
     raw_ok = [m for m, c in got.items() if c > 0]
     # Барселона (окрема таблиця, прив'язка тільки по кампаніях Ірини)
     try:
