@@ -258,11 +258,12 @@ def main():
     manual = os.environ.get("GITHUB_EVENT_NAME", "") == "workflow_dispatch"
     upd = d.get("updated", "")
     hour = int(upd[11:13]) if len(upd) >= 13 else 0
-    # «вечір» = 21..23 АБО 00..02: планувальник GitHub возить вечірній запуск (20:25Z)
-    # з лагом ~2 год, і дані приїжджають після опівночі — 03–04.09 бриф через це
-    # мовчав. Для 00..02 build() сам візьме день, що щойно закрився (rday = ud-1).
-    if not manual and not (hour >= 21 or hour < 3):
-        print("skip: not evening yet (updated hour=%d)" % hour)
+    # Ірина хоче бриф ДО 23:00 (05.09). Планувальник GitHub возить крони з лагом
+    # 0–2.5 год, тому у refresh.yml ДВА вечірні слоти (18:25Z і 20:25Z), а шлемо
+    # ЛИШЕ коли дані приїхали у вікно 21..22 за Прагою — за будь-якого лагу
+    # кваліфікується рівно один запуск (без дублів), бриф приходить ~21:30–23:00.
+    if not manual and hour not in (21, 22):
+        print("skip: outside evening window 21..22 (updated hour=%d)" % hour)
         return
     text = build(d)
     send(text)
