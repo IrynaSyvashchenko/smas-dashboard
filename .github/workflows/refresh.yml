@@ -3,7 +3,7 @@ name: Refresh dashboard data
 # Runs in GitHub's cloud, every 2 hours, 24/7 — independent of any computer.
 on:
   schedule:
-                - cron: "25 5-17/2,20 * * *"  # every 2h ~07:25-19:25 Prague + ~22:25; minute !=0, bo GitHub dropaye cron na :00 (26-27.08 propusk ranku)
+                - cron: "25 5-17/2,18,20 * * *"  # every 2h 07-19 Prague + DVA vechirni sloty 18:25Z/20:25Z: lag planuvalnyka 0-2.5h, bryf shle lyshe toy, chyi dani vpaly v 21..22 Prahy
   workflow_dispatch: {}        # allows a manual "Run workflow" click
 
 permissions:
