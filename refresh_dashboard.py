@@ -1545,6 +1545,14 @@ def main():
         # «знято сьогодні» — позначки, що зникли з таблиці протягом дня (скасування,
         # «уже записана», зміна статусу). Накопичується в _bookRemoved за день,
         # щоб Ірина бачила, чому «нових записів сьогодні» поменшало.
+        # _bookRegTomb — «тумбстоуни» знятих записів {mgr: {key: перша_дата}}: якщо
+        # позначка тимчасово зникла (збій таблиці, рядок-дублікат «Повтор номера»
+        # перекрив забукований) і повернулась, відновлюємо стару дату першої появи,
+        # щоб старий запис НЕ рахувався «новим сьогодні» (інцидент 05.09: у Діани
+        # бриф показав 3 фантомні записи по серпневих лідах). Тумбстоуни живуть 60 дн.
+        tomb = dict(cur.get("_bookRegTomb") or {})
+        _tomb_cutoff = (datetime.datetime.now(TZ).date()
+                        - datetime.timedelta(days=60)).isoformat()
         rem_prev = cur.get("_bookRemoved") or {}
         rem_by = dict(rem_prev.get("byMgr") or {}) if rem_prev.get("date") == today_local else {}
         for m, v in bk.items():
@@ -1552,18 +1560,25 @@ def main():
                 continue
             booked_set = set(v["booked_keys"])
             mreg = dict(reg.get(m) or {})
+            mtomb = dict(tomb.get(m) or {})
             migrate = m not in reg
-            removed_now = sum(1 for kk in mreg if kk not in booked_set)
+            removed_now = 0
+            for kk, dd in mreg.items():
+                if kk not in booked_set:
+                    removed_now += 1
+                    mtomb[kk] = dd                    # пам'ятаємо першу появу знятого запису
             if removed_now:
                 rem_by[m] = rem_by.get(m, 0) + removed_now
             for kk in booked_set:
                 if kk not in mreg:
-                    mreg[kk] = "" if migrate else today_local
+                    mreg[kk] = "" if migrate else mtomb.pop(kk, today_local)
             mreg = {kk: d for kk, d in mreg.items() if kk in booked_set}   # знятий запис -> геть
             new_reg[m] = mreg
+            tomb[m] = {kk: d for kk, d in mtomb.items() if (not d) or d >= _tomb_cutoff}
             out["managers"][m]["bookingsToday"] = sum(1 for d in mreg.values() if d == today_local)
             out["managers"][m]["bookingsRemovedToday"] = rem_by.get(m, 0)
         out["_bookReg"] = new_reg
+        out["_bookRegTomb"] = tomb
         out["_bookRemoved"] = {"date": today_local, "byMgr": rem_by}
 
     # Записи Instagram-карток — з INST_MANUAL (незалежно від Google-таблиці)
