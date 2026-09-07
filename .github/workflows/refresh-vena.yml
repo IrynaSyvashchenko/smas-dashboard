@@ -1,9 +1,16 @@
 name: Refresh vena dashboard (ad5)
 
-# Той самий графік, що й головний дашборд: кожні 2 години в GitHub cloud.
+# Два незалежні тригери:
+#  1) власний розклад кожні 2 год — GitHub реально відпрацьовує ~6-7 слотів з 12,
+#     вранці регулярно дірка 6+ год (04:30 -> 10:30 UTC);
+#  2) ланцюжок від головного дашборда — його розклад надійніший, тож vena
+#     оновлюється одразу після кожного "Refresh dashboard data".
 on:
   schedule:
     - cron: "15 */2 * * *"     # зсув на :15, щоб не штовхатися з головним refresh
+  workflow_run:
+    workflows: ["Refresh dashboard data"]
+    types: [completed]
   workflow_dispatch: {}
 
 permissions:
