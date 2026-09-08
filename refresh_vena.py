@@ -452,17 +452,36 @@ def _book_kind(r):
 
 def _tally_manager(rows, today, raw_idx):
     """Метрики однієї CRM-вкладки. Лід Ірини = created_time >= DATE_FROM
-    (з рядка або з сирої вкладки по телефону). Без дати = не її, не рахуємо."""
-    seen = {}
+    (з рядка або з сирої вкладки по телефону).
+    Якщо дати немає ніде — беремо дату СУСІДНЬОГО рядка: вкладка заповнюється
+    хронологічно, а порожня created_time означає збій ARRAYFORMULA (лід не
+    доїхав у сиру вкладку Meta). Без цього такі рядки просто зникали зі звіту
+    разом із записами. Відсічення < DATE_FROM лишається, тож ліди попереднього
+    таргетолога все одно не потраплять."""
+    dates = []
     for r in rows:
+        ct = str(r.get("created_time") or "")[:10]
+        if not re.match(r"\d{4}-\d{2}-\d{2}", ct):
+            ph0 = phone9(_phone_of(r))
+            ct = ((raw_idx.get(ph0) or {}).get("ct") or "") if ph0 else ""
+        dates.append(ct if re.match(r"\d{4}-\d{2}-\d{2}", ct or "") else "")
+    filled, last = list(dates), ""
+    for i, d in enumerate(dates):          # дата попереднього рядка з датою
+        if d: last = d
+        elif last: filled[i] = last
+    nxt = ""
+    for i in range(len(dates) - 1, -1, -1):  # для рядків над найпершою датою
+        if dates[i]: nxt = dates[i]
+        elif not filled[i] and nxt: filled[i] = nxt
+    guessed = sum(1 for i, d in enumerate(dates) if not d and filled[i])
+    if guessed:
+        print("  дата з сусіднього рядка для %d рядків без created_time" % guessed)
+    seen = {}
+    for i, r in enumerate(rows):
         ph = phone9(_phone_of(r))
         if not ph:
             continue
-        ct = str(r.get("created_time") or "")[:10]
-        if not re.match(r"\d{4}-\d{2}-\d{2}", ct):
-            hit = raw_idx.get(ph)
-            ct = (hit or {}).get("ct") or ""
-        seen[(ph, ct)] = (r, ct)
+        seen[(ph, filled[i])] = (r, filled[i])
     yest = today - datetime.timedelta(days=1)
     month_start = today.replace(day=1)
     pm_start = (month_start - datetime.timedelta(days=1)).replace(day=1)
