@@ -148,6 +148,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     let s=0; for(const dK in f){ if(p.pred(dK)) s+=f[dK]||0; } return s;};
   const factBase=(name,p)=>{const g=FG[name]; if(!g||!g.length) return null;
     return g.reduce((a,n)=>a+(M[n]?p.bk(M[n],n):0),0);};
+  // витрати всіх напрямків, які покриває один рядок факту — інакше CPA·факт
+  // ділив би витрати лише однієї кампанії на записи обох
+  const factSpend=(name,p)=>{const g=FG[name]; if(!g||!g.length) return null;
+    return g.reduce((a,n)=>{const q=M[n]; if(!q) return a;
+      return a+q.dates.reduce((x,d,i)=>x+(p.pred(d)?(q.spend[i]||0):0),0);},0);};
   const factLbl=(name)=>{const g=FG[name];
     return (g&&g.length>1)?' <span style="color:var(--mut);font-weight:400">(лід-форма + квіз)</span>':'';};
 
@@ -390,7 +395,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       const cCol=cpaColor(name,cpa);
       const fbk=factSum(name,p);                 // факт адміна за цей період (null = нема реєстру)
       if(fbk!=null){ tFbk+=fbk; }
-      const fCol=fbk?cpaColor(name,sp/fbk):'';
+      const fSp=factSpend(name,p)??sp;          // база витрат для CPA·факт
+      const fCol=fbk?cpaColor(name,fSp/fbk):'';
       const off=m.act===false; cards.push(`<div class="card"${off?' style="opacity:.55"':''}>
         <h3>${name} <span class="city">${m.city}</span>${off?' <span class="tag" style="background:var(--card2);color:var(--mut);border:1px solid var(--border)">вимкнена</span>':''}</h3>
         <div class="bigrow">
@@ -402,7 +408,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <div class="row"><span class="l">Записи</span><b>${bk}</b></div>
         ${konsRows(name,m,p,sp)}
         ${fbk!=null?`<div class="row"><span class="l">Записи · факт адміна${factLbl(name)}</span><b>${fbk}${(()=>{const base=factBase(name,p)??bk;return fbk>base?` <span class="tag y">+${fbk-base} без позначки</span>`:'';})()}</b></div>
-        <div class="row"><span class="l">CPA · факт</span><b${fCol?` style="color:${fCol}"`:''}>${fmt(fbk?sp/fbk:null)}</b></div>`:''}
+        <div class="row"><span class="l">CPA · факт${factLbl(name)}</span><b${fCol?` style="color:${fCol}"`:''}>${fmt(fbk?fSp/fbk:null)}</b></div>`:''}
         <div class="row"><span class="l">Конверсія в запис</span><b>${conv}</b></div>
         ${isInst(name)?'<div class="row"><span class="l">Канал</span><b>Instagram Direct</b></div>':''}
         ${roasRows(m,sp,bk)}
@@ -650,7 +656,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     'Розбивка записів у картках Стомату/Квіза («— на консультацію» / «— на установку») — зі статусів адміна «Запись консультация» і «Запись установка»; ціна поруч = витрати періоду ÷ такі записи. Запис без типу рахується лише в «Записи» загалом.<br>'+
     'Алерти про ціну запису (💰) рахуються за останні 7 днів і порівнюються з чеком напрямку (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
     'Записи: вкладки «Стомат Ирина» і «Вена Ирина» таблиці «Лиды Анна Олеговна»; атрибуція до ад-сета/креативу — по телефону через сирі вкладки fbS/fbV. Ліди з <b>квіза</b> (viniry-kyiv.adsquiz.io) падають в ADS Quiz — щоб вони теж рахувались у записах, адмін має вносити їх у вкладку «Стомат Ирина».<br>'+
-    '<b>Записи · факт адміна</b> — з щоденної таблиці «Отчет Анна Олеговна» (колонка «в запись всего», рядки таргетолога Ирина). Це записи, зроблені <b>за той день</b>, включно зі старими лідами й лідами до 15.08. «Записи» вище — позначки в CRM за датою <b>створення</b> ліда, тільки по лідах Ірини. Тому дві цифри законно різняться: по Відню факт більший (там довгий хвіст старих лідів), по Україні — менший (частина записів не внесена в щоденну таблицю). У стоматології адміни ведуть один рядок на лід-форму і квіз разом, тому факт показаний на картці «Стомат Київ» і покриває обидві.<br>'+
+    '<b>Записи · факт адміна</b> — з щоденної таблиці «Отчет Анна Олеговна» (колонка «в запись всего», рядки таргетолога Ирина). Це записи, зроблені <b>за той день</b>, включно зі старими лідами й лідами до 15.08. «Записи» вище — позначки в CRM за датою <b>створення</b> ліда, тільки по лідах Ірини. Тому дві цифри законно різняться: по Відню факт більший (там довгий хвіст старих лідів), по Україні — менший (частина записів не внесена в щоденну таблицю). У стоматології адміни ведуть один рядок на лід-форму і квіз разом, тому факт показаний на картці «Стомат Київ» і покриває обидві — відповідно CPA·факт там рахується від СУМИ витрат лід-форми і квіза, а не тільки лід-форми.<br>'+
     'Дані: Meta Ads (Graph API) + Google-таблиця'
 }).catch(e=>{document.getElementById('updated').textContent='Помилка завантаження даних: '+e.message});
 </script>
