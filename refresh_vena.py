@@ -61,6 +61,70 @@ MANAGER_SHEET = {"Стомат Київ": ["Стомат Ирина"],
                  "Тернопіль":   ["Smas Тернополь"],
                  # вкладки ще нема (РК стартувала 31.08) — кандидати, неіснуючі читаються м'яко
                  "СМАС Харків": ["Smas Харьков", "Smas Харків"]}
+# ---- ФАКТ адміністраторів: щоденна таблиця «Отчет Анна Олеговна» -----------
+# Окрема таблиця Наталії (доступ «за посиланням» -> читається без авторизації,
+# через gviz). Рядок = день + напрямок; колонка «в запись всего» = скільки
+# записів адмін зробив ЗА ЦЕЙ ДЕНЬ (включно зі старими лідами), тоді як наші
+# «Записи» — це позначки в CRM за датою СТВОРЕННЯ ліда. Тому дві цифри законно
+# різняться; факт показуємо окремим рядком на картці, як у головному дашборді.
+ADMIN_SHEET = "1rulsNHGXu8mitgptrQnEeI5ZV2nt3HPCzimPnFwYys4"
+ADMIN_GID   = "1811972916"          # вкладка «отчет»
+ADMIN_ME    = "ирина"               # колонка «таргетолог» — беремо тільки свої рядки
+# У таблиці адмінів стоматологія — ОДИН рядок «Лиды стоматология к.» на лід-форму
+# і квіз разом, тому факт лягає на «Стомат Київ», а картка Квіза лишається без
+# факту. factGroup каже фронту, які напрямки покриває цей один рядок.
+FACT_GROUP  = {"Стомат Київ": ["Стомат Київ", "Стомат Квіз"]}
+
+def _fact_dir(name):
+    """«название инст» у таблиці адмінів -> напрямок дашборда (None = не наше)."""
+    s = (name or "").strip().lower()
+    if not s or s.startswith("@"):           # інстаграм-діалоги в дашборді не ведемо
+        return None
+    if "стоматолог" in s:                    return "Стомат Київ"
+    if "вена" in s or "вену" in s:           return "Відень"
+    if "тернопол" in s or "тернопіл" in s:   return "Тернопіль"
+    if "харьков" in s or "харків" in s:      return "СМАС Харків"
+    if "смас" in s and ("киев" in s or "київ" in s): return "СМАС Київ"
+    return None
+
+def fetch_admin_fact():
+    """{напрямок: {"YYYY-MM-DD": записів за день}} з таблиці адміністраторів."""
+    url = ("https://docs.google.com/spreadsheets/d/%s/gviz/tq?tqx=out:json&gid=%s"
+           % (ADMIN_SHEET, ADMIN_GID))
+    req = urllib.request.Request(url, headers={"User-Agent": "vena-dashboard-refresh"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        txt = r.read().decode("utf-8", "replace")
+    j = json.loads(txt[txt.index("{"): txt.rindex("}") + 1])
+    daily, skipped = {}, {}
+    for row in j["table"]["rows"]:
+        c = row.get("c") or []
+        def g(i, _c=c):
+            return _c[i].get("v") if i < len(_c) and _c[i] else None
+        if str(g(1) or "").strip().lower() != ADMIN_ME:
+            continue
+        dv = g(0)
+        if not isinstance(dv, str) or not dv.startswith("Date("):
+            continue          # рядки-заголовки міст і порожні
+        md = re.match(r"Date\((\d+),(\d+),(\d+)", dv)
+        if not md:
+            continue
+        d = "%s-%02d-%02d" % (md.group(1), int(md.group(2)) + 1, int(md.group(3)))
+        if d < DATE_FROM:
+            continue
+        who = _fact_dir(g(3))
+        if not who:
+            nm = str(g(3) or "").strip()
+            if nm: skipped[nm] = skipped.get(nm, 0) + 1
+            continue
+        b = int(num(g(5)))
+        if b:
+            daily.setdefault(who, {})
+            daily[who][d] = daily[who].get(d, 0) + b
+    if skipped:
+        print("  факт: пропущено рядків ->", ", ".join(
+            "%s x%d" % (k, v) for k, v in sorted(skipped.items())))
+    return daily
+
 RAW_SHEETS    = ["fbS", "fbV",
                  # кандидати «на виріст» — неіснуючі просто не прочитаються (м'яко)
                  "fbS2", "fbV2", "fbT", "fbK", "fbH", "fbX", "fb1", "fb2"]
@@ -879,6 +943,25 @@ def main():
                 out["scaling"] = sc
         except Exception as e:
             print("scaling failed:", str(e)[:120])
+
+    # ---- факт адміністраторів (окрема таблиця) ----
+    try:
+        fd = fetch_admin_fact()
+        if fd:
+            out["factDaily"] = fd
+            out["factGroup"] = FACT_GROUP
+            months = {}
+            for who, days in fd.items():
+                for d, n in days.items():
+                    months.setdefault(d[:7], {})
+                    months[d[:7]][who] = months[d[:7]].get(who, 0) + n
+            out["factBookings"] = months
+            print("факт адміна:", ", ".join(
+                "%s %d" % (k, sum(v.values())) for k, v in sorted(fd.items())))
+        else:
+            print("факт адміна: порожньо -> лишаю попередній")
+    except Exception as e:
+        print("факт адміна failed:", str(e)[:140], "-> лишаю попередній")
 
     out["_diag"] = {"rawTabs": raw_stats}
 
