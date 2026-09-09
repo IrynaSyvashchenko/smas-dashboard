@@ -38,6 +38,10 @@ DATA_FILE  = "vena/data.json"
 # ---- напрямки (в термінах дашборда — «менеджери») -------------------------
 # classify() іде по порядку: Відень ПЕРЕД «смас», бо «15.08_Vienna_smas» містить обидва.
 LEAD_KW = {
+    # косметологія ПЕРЕД рештою: «3.09_cosmetology_USA» / «10.09_cosmetology_Ukraine».
+    # США перед UA, бо запасне слово «cosmetology» в UA інакше перехопило б обидві.
+    "Косметологія США": ("cosmetology_usa", "cosmetology usa"),
+    "Косметологія UA":  ("cosmetology_ukraine", "cosmetology_ua", "cosmetology"),
     "Стомат Київ": ("stomatologia", "viniry", "vinir", "стомат", "quiz"),
     "Відень":      ("vienna", "wien", "відень", "вена"),
     "Тернопіль":   ("ternopil", "тернопіл"),
@@ -46,7 +50,8 @@ LEAD_KW = {
     "СМАС Київ":   ("smas", "смас"),
 }
 CITY_OF = {"Стомат Київ": "Київ", "Стомат Квіз": "Київ", "Відень": "Відень",
-           "Тернопіль": "Тернопіль", "СМАС Київ": "Київ", "СМАС Харків": "Харків"}
+           "Тернопіль": "Тернопіль", "СМАС Київ": "Київ", "СМАС Харків": "Харків",
+           "Косметологія UA": "Україна", "Косметологія США": "США"}
 
 # ---- Google-таблиця «Лиды Анна Олеговна» ----------------------------------
 SHEET_ID = "1RdXP96bS0e6UPnPrkql4z4n21cNV7FbMuk6fdWYHnPA"
@@ -137,7 +142,9 @@ AVG_CHECK = {"Стомат Київ": (39990, "UAH"),
              "Відень":      (149,   "EUR"),
              "СМАС Київ":   (2499,  "UAH"),
              "Тернопіль":   (2499,  "UAH"),
-             "СМАС Харків": (2499,  "UAH")}
+             "СМАС Харків": (2499,  "UAH"),
+             "Косметологія UA":  (999, "UAH"),
+             "Косметологія США": (39,  "USD")}
 
 def check_usd_node(m):
     v = AVG_CHECK.get(m)
@@ -247,10 +254,17 @@ def _is_quiz_adset(adset):
     a = str(adset or "").lower()
     return "quiz" in a or "квіз" in a or "квиз" in a
 
+def _is_kyiv_quiz(campaign, adset):
+    """Квіз-адсет САМЕ київської стоматології. Перевірка кампанії обов'язкова:
+    інакше будь-який адсет зі словом «quiz» (напр. 4.09_Miami_quiz у РК
+    3.09_cosmetology_USA) падав у картку «Стомат Квіз» і перетягував на себе
+    київські квіз-записи."""
+    return _is_quiz_adset(adset) and classify(campaign)[1] == "Стомат Київ"
+
 def classify_row(campaign, adset=None):
-    """Квіз — окрема картка: адсет із «quiz» у назві йде в «Стомат Квіз»,
-    решта — по назві кампанії, як раніше."""
-    if _is_quiz_adset(adset):
+    """Квіз — окрема картка: адсет із «quiz» у назві в РК київської стоматології
+    йде в «Стомат Квіз», решта — по назві кампанії, як раніше."""
+    if _is_kyiv_quiz(campaign, adset):
         return ("lead", "Стомат Квіз")
     return classify(campaign)
 
@@ -586,7 +600,7 @@ def build_adsets(periods, bk, raw_map):
         # єдиний квіз-адсет, а якщо їх кілька (старий вимкнений + новий) — по даті
         # ліда проти датного префікса назви (18.08_... / 31.08_...)
         quiz_ids = {a_id: str(a_.get("adset") or "") for a_id, a_ in agg.items()
-                    if "quiz" in str(a_.get("adset") or "").lower()}
+                    if _is_kyiv_quiz(a_.get("campaign"), a_.get("adset"))}
         def _quiz_adset(hit, cd):
             want = str(hit.get("adset") or "").strip().lower()
             if want:
