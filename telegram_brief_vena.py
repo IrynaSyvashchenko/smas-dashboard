@@ -127,6 +127,17 @@ def build(d, use_today=True):
     L.append(""); L.append("📊 Дашборд: %s" % DASH_URL)
     return "\n".join(L)
 
+def token_warn(d):
+    """Рядок-попередження про токен Meta на початок брифа (порожній, якщо все гаразд)."""
+    tk = d.get("metaToken") or {}
+    src = str(d.get("metaSource") or "")
+    if tk.get("valid") is False or "stale" in src:
+        return "🔑 Meta не віддає дані — токен протух або не відповідає. Витрати/ліди нижче застиглі. Онови META_TOKEN у GitHub Secrets.\n\n"
+    dl = tk.get("daysLeft")
+    if dl is not None and dl <= 7:
+        return "🔑 Токен Meta закінчується %s (через %d дн.) — онови заздалегідь.\n\n" % (str(tk.get("expires") or "")[:10], dl)
+    return ""
+
 def main():
     if not TOKEN:
         sys.exit("ERROR: TELEGRAM_BOT_TOKEN не заданий (додай секрет у GitHub Actions)")
@@ -139,7 +150,7 @@ def main():
     if not manual and not (21 <= hour <= 23):
         print("skip: not the evening refresh (updated hour=%d)" % hour)
         return
-    text = build(d, use_today=(hour >= 12))
+    text = token_warn(d) + build(d, use_today=(hour >= 12))
     send(text)
     print("sent, %d chars" % len(text))
 

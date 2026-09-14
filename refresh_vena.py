@@ -284,6 +284,27 @@ def _pick_by_date(cands, name_of, cd):
             best, bd = aid, d
     return best
 
+def meta_token_info():
+    """Стан токена Meta для алерта на дашборді/в брифі: чи валідний і коли закінчується.
+    debug_token приймає сам user-токен як access_token — app-токен не потрібен.
+    Протухлий токен дає HTTP 400 -> valid=False; expires_at=0 = безстроковий (system user)."""
+    if not META_TOKEN:
+        return {"valid": False, "expires": None, "daysLeft": None, "note": "META_TOKEN не заданий"}
+    try:
+        url = "%s/debug_token?%s" % (GRAPH_API, urllib.parse.urlencode(
+            {"input_token": META_TOKEN, "access_token": META_TOKEN}))
+        d = http_json(url).get("data") or {}
+        exp = int(d.get("expires_at") or 0)
+        iso = datetime.datetime.fromtimestamp(exp, TZ).replace(microsecond=0).isoformat() if exp else None
+        days = int((exp - time.time()) // 86400) if exp else None
+        info = {"valid": bool(d.get("is_valid")), "expires": iso, "daysLeft": days,
+                "note": (d.get("error") or {}).get("message")}
+    except Exception as e:
+        info = {"valid": False, "expires": None, "daysLeft": None, "note": str(e)[:200]}
+    print("meta token:", "valid" if info["valid"] else "INVALID", "| expires", info["expires"],
+          "| days left", info["daysLeft"], ("| " + info["note"]) if info.get("note") else "")
+    return info
+
 def fetch_meta():
     """Денні spend/leads по кампаніях. None = Meta недоступна (старі дані лишаються)."""
     try:
@@ -812,7 +833,10 @@ def main():
 
     out = json.loads(json.dumps(cur))
     out["updated"] = datetime.datetime.now(TZ).replace(microsecond=0).isoformat()
-    out["metaSource"] = "graph" if rows is not None else (cur.get("metaSource") or "—")
+    # rows is None = Meta не відповіла (протухлий токен тощо): денні ряди лишаються старі,
+    # тому чесно позначаємо «stale» — сайт і бриф покажуть алерт замість тихого замерзання
+    out["metaSource"] = "graph" if rows is not None else "graph-stale"
+    out["metaToken"]  = meta_token_info()
     out["periodNote"] = "кабінет ad5 · дані з 15.08 (старт Ірини) · оновлюється кожні 2 год"
 
     if rows is not None:
