@@ -548,10 +548,11 @@ def fetch_sheet_rows(gid=None, ss=None, sheet=None):
         url += "&sheet=%s" % urllib.parse.quote(sheet)
     else:
         url += "&gid=%s" % gid
-    # міст інколи флейкає (разові 5xx/timeout) — до 3 спроб, щоб один збій
-    # не лишав менеджера без записів/якості на цілий цикл оновлення
+    # міст інколи флейкає (разові 5xx/timeout, а 14.09 — серія HTML-404 від Google
+    # на ~хвилину) — до 5 спроб з наростаючою паузою 3/6/12/24 с (~45 с), щоб один
+    # збій не лишав менеджера без записів/якості (і ад-сети без атрибуції) на цілий цикл
     payload = None; last_err = None
-    for _att in range(3):
+    for _att in range(5):
         try:
             payload = http_json(url)       # Apps Script віддає 302 -> urllib йде за ним сам
             break
@@ -562,7 +563,8 @@ def fetch_sheet_rows(gid=None, ss=None, sheet=None):
             last_err = RuntimeError("HTTP %s: %s" % (e.code, body))
         except Exception as e:
             last_err = e
-        time.sleep(4)
+        if _att < 4:
+            time.sleep(3 * (2 ** _att))
     if payload is None:
         raise last_err
     if isinstance(payload, dict) and payload.get("error"):
