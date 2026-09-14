@@ -124,7 +124,7 @@ const addD=(s,n)=>{const d=new Date(s+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+
 Chart.defaults.color='#8b96ab';Chart.defaults.borderColor='#2a3550';
 
 fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
-  const srcNote=D.metaSource?(D.metaSource==='graph'?' · Meta: Graph API ✅':' · Meta: Windsor (fallback)'):'';
+  const srcNote=D.metaSource?(D.metaSource==='graph'?' · Meta: Graph API ✅':(/stale/.test(D.metaSource)?' · ⚠️ Meta не відповідає — витрати/ліди застигли':' · Meta: Windsor (fallback)')):'';
   document.getElementById('updated').textContent='Оновлено: '+new Date(D.updated).toLocaleString('uk-UA')+' · '+D.periodNote+srcNote;
 
   const M=D.managers;
@@ -322,6 +322,14 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // Гроші без лідів -> вимкнути; дорогий запис (CPA vs чек) -> розібратись; частота -> замінити креатив.
   function buildAlerts(k){
     const A=[];
+    // Токен Meta — найважливіший алерт: без нього застигають витрати й ліди, а сторінка виглядає живою.
+    const tk=D.metaToken||{};
+    const tkDate=tk.expires?new Date(tk.expires).toLocaleDateString('uk-UA'):'';
+    if(tk.valid===false||/stale/.test(D.metaSource||'')){
+      A.push(['bad',`🔑 <b>Meta не віддає дані</b> — токен ${tk.valid===false?'недійсний або протух':'не відповідає'}${tkDate?' (закінчився '+tkDate+')':''}. Витрати й ліди застигли. Онови META_TOKEN: Graph API Explorer → Generate → Extend → GitHub → Settings → Secrets.`]);
+    } else if(tk.daysLeft!=null&&tk.daysLeft<=7){
+      A.push(['warn',`🔑 Токен Meta закінчується <b>${tkDate}</b> (через ${tk.daysLeft} дн.) — онови заздалегідь: Graph API Explorer → Generate → Extend → GitHub Secrets → META_TOKEN.`]);
+    }
     const deadAdsets=new Set();
     for(const a of (AS[k]||[])){
       if(isInst(a.m)||a.act===false) continue;   // інста -> ліди в Direct; вимкнений -> дій не потребує
