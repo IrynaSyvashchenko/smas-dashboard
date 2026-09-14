@@ -318,7 +318,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     const tk=D.metaToken||{};
     const tkDate=tk.expires?new Date(tk.expires).toLocaleDateString('uk-UA'):'';
     if(tk.valid===false||/stale/.test(D.metaSource||'')){
-      A.push(['bad',`🔑 <b>Meta не віддає дані</b> — токен ${tk.valid===false?'недійсний або протух':'не відповідає'}${tkDate?' (закінчився '+tkDate+')':''}. Витрати й ліди застигли. Онови META_TOKEN: Graph API Explorer → Generate → Extend → GitHub → Settings → Secrets.`]);
+      A.push(['bad',`🔑 <b>Meta не віддає дані</b> — токен ${tk.valid===false?'недійсний або протух':'не відповідає'}${(tk.valid===false&&tkDate)?' (закінчився '+tkDate+')':''}. Витрати й ліди застигли. Онови META_TOKEN: Graph API Explorer → Generate → Extend → GitHub → Settings → Secrets.`]);
     } else if(tk.daysLeft!=null&&tk.daysLeft<=7){
       A.push(['warn',`🔑 Токен Meta закінчується <b>${tkDate}</b> (через ${tk.daysLeft} дн.) — онови заздалегідь: Graph API Explorer → Generate → Extend → GitHub Secrets → META_TOKEN.`]);
     }
