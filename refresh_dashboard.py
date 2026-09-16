@@ -37,6 +37,18 @@ SHEETS_KEY = _clean_secret("SHEETS_KEY")
 META_TOKEN = _clean_secret("META_TOKEN")
 GRAPH_API  = "https://graph.facebook.com/v21.0"
 ACCOUNT   = "873265084670144"
+# Другий кабінет «Ad!new» (портфоліо hi_fu_rome_beauty) — кабінет співвласниці Наталі
+# Владимирівни (НВ), з 16.09.2026. Meta-запити йдуть в ОБИДВА кабінети, рядки несуть
+# account_id; кампанії нового кабінету отримують менеджера з суфіксом « НВ»
+# («Саида НВ»), а мінська РК — окремого менеджера «Минск».
+NEW_ACCOUNT = "990427180610562"
+ACCOUNTS    = (ACCOUNT, NEW_ACCOUNT)
+NB_SUFFIX   = " НВ"
+NB_SEED     = {"16.09_Saida_Paris", "16.09_Minsk"}
+NB_CAMPS    = set(NB_SEED)   # + назви кампаній нового кабінету, які віддала Meta
+# РК, яка ПЕРЕЙШЛА до іншого менеджера: до дати — не наша (ліди Жені), з дати — Даника.
+# Ключ = підрядок назви кампанії, значення = перша дата, з якої рахуємо.
+CAMP_SINCE  = {"Женя_16.09_Дан": "2026-09-16"}
 DATE_FROM = "2026-06-20"
 TODAY     = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=2))).date().isoformat()  # празька дата, щоб «Сьогодні» збігалося з «Оновлено» навіть уночі
 DATA_FILE = "data.json"
@@ -50,7 +62,17 @@ LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Ali
            "Вика": ("Prague_new", "Prague_Vika", "Viktoria", "Vika"),
            # Мага ПЕРЕД Юліаною: її РК може містити "Barcelona"
            "Мага": ("Maga", "Мага"),
-           "Юлиана": "Barcelona"}
+           "Юлиана": "Barcelona",
+           # Даник (Париж, з 12.09): своя РК + РК Жені, передана йому 16.09 (див. CAMP_SINCE)
+           "Даник": ("Danik", "Данік", "Даник")}
+
+def camp_active_on(campaign, date):
+    """False, якщо кампанія в CAMP_SINCE і дата раніша за дату передачі."""
+    c = str(campaign or ""); d = str(date or "")[:10]
+    for key, since in CAMP_SINCE.items():
+        if key in c and d and d < since:
+            return False
+    return True
 
 # --- Instagram-кампанії: окремі картки на дашборді -------------------------
 # Ліди цих РК ідуть в Instagram Direct — їх немає ні в лід-формах Meta, ні в
@@ -81,6 +103,8 @@ FACT_BOOKINGS = {
 # новые заявки | запись из новых | запись из старых | в запись всего | ...».
 ADMIN_SS  = "1-KjfT3Q8kc3UEijfynV1Ha5PGlXeLUL_Iu9IWS4iyLA"
 ADMIN_GID = "1593394532"
+NB_ADMIN_SS  = "1JMTDqWIXaurzqDJeqiDymL37MTBtvB6wQNtIb98EHJg"   # «отчет Наталья Владимировна»
+NB_ADMIN_GID = "450427268"                                        # лист «отчет фб»
 
 def _admin_mgr(name):
     """«название инст» з реєстру -> менеджер дашборда. None = не наш/нерозпізнаний."""
@@ -95,6 +119,8 @@ def _admin_mgr(name):
     if "алиса" in n:                  return "Алиса"
     if "максим" in n or "мага" in n:  return "Мага"      # кампанія «Лиды Париж Максим» веде Мага
     if "яна" in n:                    return None        # Яна — менеджер іншого таргетолога
+    if "даник" in n or "данік" in n:  return "Даник"
+    if "женя" in n:                   return None        # Женя — до 16.09 не наш; РК передана Данику
     if "юлиана" in n or "барселона" in n: return "Юлиана"
     if "вика" in n or "вікa" in n or "vika" in n: return "Вика"   # «Лиды Прага Вика» — НЕ Даша (грабля: серпень рахувався Даші)
     if "прага" in n:                  return "Даша"      # «Лиды Прага» без імені = Даша
@@ -127,12 +153,39 @@ def fetch_admin_fact():
         mk, ds = dt.isoformat()[:7], dt.isoformat()
         monthly.setdefault(mk, {})[mgr] = monthly.get(mk, {}).get(mgr, 0) + tot
         daily.setdefault(mgr, {})[ds] = daily.get(mgr, {}).get(ds, 0) + tot
+    # реєстр НВ («отчет Наталья Владимировна»): рядки таргетолога Ірини по новому кабінету
+    try:
+        for r in fetch_sheet_rows(gid=NB_ADMIN_GID, ss=NB_ADMIN_SS):
+            if "ирин" not in str(r.get("таргетолог") or "").lower():
+                continue
+            m = re.match(r"(\d{1,2})\.(\d{1,2})$", str(r.get("дата") or "").strip())
+            if not m:
+                continue
+            try:
+                dt = datetime.date(year, int(m.group(2)), int(m.group(1)))
+            except ValueError:
+                continue
+            tot = int(num(r.get("всего_в_запись") or r.get("в_запись_всего")))
+            n = str(r.get("название_инст") or "").lower(); adm = str(r.get("админ") or "").lower()
+            mgr = "Минск" if ("минск" in n or "minsk" in n or "алина" in adm) else ("Саида НВ" if "париж" in n else None)
+            if mgr is None:
+                if tot:
+                    unmapped["НВ:" + (n or "?")] = unmapped.get("НВ:" + (n or "?"), 0) + tot
+                continue
+            mk, ds = dt.isoformat()[:7], dt.isoformat()
+            monthly.setdefault(mk, {})[mgr] = monthly.get(mk, {}).get(mgr, 0) + tot
+            daily.setdefault(mgr, {})[ds] = daily.get(mgr, {}).get(ds, 0) + tot
+    except Exception as e:
+        print("  реєстр НВ FAIL ->", str(e)[:80])
     return {"monthly": monthly, "daily": daily, "unmapped": unmapped}
 
 # Нові менеджери: вузол у data.json створюється автоматично при першому запуску
 MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "2026-07-09"},
                      "Мага":   {"city": "Париж", "start": "2026-07-18"},
                      "Вика":   {"city": "Прага", "start": "2026-08-12"},
+                     "Даник":  {"city": "Париж", "start": "2026-09-12"},
+                     "Саида НВ": {"city": "Париж", "start": "2026-09-16"},
+                     "Минск":  {"city": "Минск", "start": "2026-09-16"},
                      INST_MGR_PARIS:  {"city": "Париж", "start": "2026-06-20"},
                      INST_MGR_PRAGUE: {"city": "Прага", "start": "2026-06-20"}}
 
@@ -146,6 +199,7 @@ MANAGER_HIDE = ("Юлиана", INST_MGR_PARIS, INST_MGR_PRAGUE)
 # Курси до USD (валюта кабінету) — константи, онови за потреби.
 EUR_USD = 1.17
 CZK_USD = 0.047
+BYN_USD = 0.33     # білоруський рубль (Мінськ): ~3.0 BYN за 1 USD
 AVG_CHECK = {   # (сума, валюта). Париж/Барселона — ціна оферу в кампанії; Прага — «модельна» ціна.
     # Диана: з 18.07 акція для моделей 2999 Kč (стара модельна 3990 лишилась у Даші/інсти).
     "Диана": (2999, "CZK"), "Даша": (3990, "CZK"),
@@ -153,6 +207,9 @@ AVG_CHECK = {   # (сума, валюта). Париж/Барселона — ц
     "Таня": (199, "EUR"), "Алиса": (159, "EUR"), "Саида": (159, "EUR"),
     "Юлиана": (199, "EUR"),
     "Мага":   (199, "EUR"),   # Париж; припущення = офер 199€, поправ, якщо інший
+    "Даник":  (159, "EUR"),   # Париж (з 12.09); припущення = 159€
+    "Саида НВ": (159, "EUR"), # новий кабінет, оффер 159€ (бордо/тіффані 16.09)
+    "Минск":  (260, "BYN"),   # «для моделей» 260 BYN замість 430
 
     INST_MGR_PARIS: (159, "EUR"), INST_MGR_PRAGUE: (3990, "CZK"),
 }
@@ -162,7 +219,7 @@ def check_usd_node(m):
     if not v:
         return None
     amt, cur = v
-    rate = {"EUR": EUR_USD, "CZK": CZK_USD, "USD": 1.0}[cur]
+    rate = {"EUR": EUR_USD, "CZK": CZK_USD, "BYN": BYN_USD, "USD": 1.0}[cur]
     return {"amount": amt, "cur": cur, "usd": round(amt * rate, 2)}
 
 # Google Sheet manager tabs, read through the Apps Script bridge (gid = tab id in the sheet).
@@ -172,10 +229,15 @@ SHEET_ID = "1sOFTQ3NTeEEFrDbUjdl3p7Jhlx-Fk7duQhk43Rikxx8"
 # сира вкладка fb5 (див. RAW_GID) — стара вкладка в барселонській таблиці видалена.
 # Значення: gid у головній таблиці АБО (ss, gid) — якщо менеджер в окремому файлі.
 VIKA_SS = "1Tpxch9P2Jadj_33cLLxCaRqfamW8W_TUWfw7MJdmrpk"   # «Прага Вика» (з 12.08)
+NB_SS    = "1Jn8NDRfLYz_STy0i6APDiMGu1Be9Qs9NU6af8_BHS4A"   # «Лиды НВ» (новий кабінет, з 16.09)
+DANIK_SS = "11Gj4OiGCVMS3O1EDwnaD7MOd-6Qi2nTQifn0kkdiiK0"   # «Лиды админы тест» (Даник/Женя)
 MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
                "Алиса": "36427361", "Саида": "2065248461", "Даша": "1406387900",
                "Мага": "1445117368",
-               "Вика": (VIKA_SS, "994125991")}
+               "Вика": (VIKA_SS, "994125991"),
+               "Даник":    (DANIK_SS, "1617315944"),   # «Даник Ирина»
+               "Саида НВ": (NB_SS, "1779517428"),      # «Ирина НВ Париж»
+               "Минск":    (NB_SS, "2082198130")}      # «Минск Ирина НВ»
 
 # НОВА таблиця «new Прага и Париж 2026» (з 05.09): менеджери переїхали сюди,
 # але СТАРА ще жива — записи по старих лідах далі проставляються там.
@@ -302,22 +364,28 @@ def _graph_once(fields, dfrom, dto):
               "limit": "500", "access_token": META_TOKEN}
     if daily:
         params["time_increment"] = "1"
-    url = "%s/act_%s/insights?%s" % (GRAPH_API, ACCOUNT, urllib.parse.urlencode(params))
     out = []
-    while url:
+    for acct in ACCOUNTS:
+      url = "%s/act_%s/insights?%s" % (GRAPH_API, acct, urllib.parse.urlencode(params))
+      while url:
         try:
             payload = http_json(url)
         except urllib.error.HTTPError as e:
             body = ""
             try: body = e.read().decode("utf-8", "replace")[:300]
             except Exception: pass
+            if acct != ACCOUNT:
+                # другий кабінет впав (права/токен) — не валимо головний
+                print("  graph (кабінет %s) FAIL -> пропускаю: HTTP %s" % (acct, e.code)); break
             raise RuntimeError("graph HTTP %s: %s" % (e.code, body))
         for r in payload.get("data", []):
             leads = 0
             for a in (r.get("actions") or []):
                 if a.get("action_type") == "lead":
                     leads += int(float(a.get("value") or 0))
-            row = {"account_id": ACCOUNT, "campaign": r.get("campaign_name"),
+            if acct == NEW_ACCOUNT and r.get("campaign_name"):
+                NB_CAMPS.add(str(r.get("campaign_name")))
+            row = {"account_id": acct, "campaign": r.get("campaign_name"),
                    "spend": r.get("spend"), "impressions": r.get("impressions"),
                    "clicks": r.get("clicks"), "reach": r.get("reach"),
                    "actions_lead": leads,
@@ -347,7 +415,7 @@ def phone9(p):
 
 def acct_ok(r):
     a = str(r.get("account_id", ""))
-    return (ACCOUNT in a) if a else True
+    return any(x in a for x in ACCOUNTS) if a else True
 
 def rate_metrics(imp, clicks, spend, reach):
     """CTR/CPM/частоту рахуємо із сум — це коректно, на відміну від усереднення Meta."""
@@ -361,6 +429,16 @@ def rate_metrics(imp, clicks, spend, reach):
 # ---------------- META ----------------
 def classify(campaign):
     c = campaign or ""
+    # кампанії НОВОГО кабінету (НВ): «Минск» -> окремий менеджер, решта -> «<менеджер> НВ»
+    if c in NB_CAMPS:
+        cl0 = c.lower()
+        if "minsk" in cl0 or "минск" in cl0 or "мінськ" in cl0:
+            return ("lead", "Минск")
+        for m, kw in LEAD_KW.items():
+            kws = kw if isinstance(kw, tuple) else (kw,)
+            if any(k.lower() in cl0 for k in kws):
+                return ("lead", m + NB_SUFFIX)
+        return (None, None)
     is_inst = ("_inst" in c) or ("instagram" in c) or ("Saidu" in c)
     if is_inst:
         if "Prague_Diana" in c or "Prague" in c:
@@ -455,7 +533,7 @@ def _book_date_cell(r):
 def is_booked(r):
     if _book_date_cell(r):
         return True
-    for sf in STATUS_FIELDS:
+    for sf in _status_keys(r):
         s = str(r.get(sf) or "").lower()
         if "отказ" in s:
             continue
@@ -503,12 +581,25 @@ BAD_KW    = ["не из париж", "не из праг", "не з париж",
 NORESP_KW = ["не прочитано", "игнор", "не взял", "не отвеч", "не отв",
              "не вышел в диалог", "не вышла в диалог"]
 
+def _status_keys(r):
+    """Колонки статусів: STATUS_FIELDS + будь-яка колонка з «звонок/сообщени/whatsapp»
+    без «время» (у нових таблицях заголовки інші: «первый звонок/ сообщение»,
+    «первое сообщение » з пробілом тощо)."""
+    ks = [k for k in STATUS_FIELDS if k in r]
+    for k in r.keys():
+        kl = str(k).lower()
+        if k in ks or "врем" in kl:
+            continue
+        if "звонок" in kl or "сообщени" in kl or "whatsapp" in kl or "ватсап" in kl:
+            ks.append(k)
+    return ks
+
 def _statuses(r):
-    return " | ".join(str(r.get(sf) or "") for sf in STATUS_FIELDS).lower()
+    return " | ".join(str(r.get(sf) or "") for sf in _status_keys(r)).lower()
 
 def _last_status(r):
     """Останній непорожній статус = поточний стан ліда."""
-    vals = [str(r.get(sf) or "").strip() for sf in STATUS_FIELDS]
+    vals = [str(r.get(sf) or "").strip() for sf in _status_keys(r)]
     vals = [v for v in vals if v and v not in ("0", "-", "—")]
     return vals[-1].lower() if vals else ""
 
@@ -901,6 +992,8 @@ def fetch_raw_map(barca_camps=frozenset()):
             mgr = _m or default_mgr
             if not mgr:
                 continue
+            if not camp_active_on(r.get("campaign_name"), r.get("created_time")):
+                continue        # лід до передачі РК — належить попередньому менеджеру
             raw_map[ph] = {"m": mgr, "ad_id": ad_id, "adset_id": as_id,
                            "ad":    str(r.get("ad_name") or ""),
                            "adset": str(r.get("adset_name") or "")}
@@ -942,6 +1035,23 @@ def fetch_raw_map(barca_camps=frozenset()):
                     print("  нова сира вкладка", t, "->", str(e)[:60])
     except Exception as e:
         print("  нова таблиця: список вкладок FAIL ->", str(e)[:80])
+    # Даник: сира вкладка fbD у «Лиды админы тест»
+    try:
+        _ingest(fetch_sheet_rows(ss=DANIK_SS, gid="130416952"), "Даник", "danik:fbD")
+    except Exception as e:
+        print("  сира вкладка fbD (Даник) ->", str(e)[:60])
+    # Новий кабінет (НВ): fb-вкладки таблиці «Лиды НВ» (fb1 = Saida Paris, fb2 = Minsk)
+    try:
+        for t in list_tabs(NB_SS):
+            if any(w in t.lower() for w in RAW_SKIP_WORDS):
+                continue
+            if RAW_TAB_RE.search(t):
+                try:
+                    _ingest(fetch_sheet_rows(ss=NB_SS, sheet=t), None, "nb:" + t)
+                except Exception as e:
+                    print("  НВ сира вкладка", t, "->", str(e)[:60])
+    except Exception as e:
+        print("  таблиця НВ: список вкладок FAIL ->", str(e)[:80])
     raw_ok = [m for m, c in got.items() if c > 0]
     # Барселона (окрема таблиця, прив'язка тільки по кампаніях Ірини)
     try:
@@ -1158,12 +1268,18 @@ def _graph_all(edge, fields, extra=None):
     params = {"fields": fields, "limit": "200", "access_token": META_TOKEN}
     if extra:
         params.update(extra)
-    url = "%s/act_%s/%s?%s" % (GRAPH_API, ACCOUNT, edge, urllib.parse.urlencode(params))
     out = []
-    while url:
-        payload = http_json(url)
-        out += payload.get("data", [])
-        url = (payload.get("paging") or {}).get("next")
+    for acct in ACCOUNTS:
+        url = "%s/act_%s/%s?%s" % (GRAPH_API, acct, edge, urllib.parse.urlencode(params))
+        try:
+            while url:
+                payload = http_json(url)
+                out += payload.get("data", [])
+                url = (payload.get("paging") or {}).get("next")
+        except Exception as e:
+            if acct == ACCOUNT:
+                raise
+            print("  graph %s (кабінет %s) FAIL -> пропускаю: %s" % (edge, acct, str(e)[:80]))
     return out
 
 def _local_date(ts):
@@ -1426,7 +1542,7 @@ def main():
     rows = fetch_meta()
     has_acc = any("account_id" in r for r in rows)
     if has_acc:
-        matched = [r for r in rows if ACCOUNT in str(r.get("account_id", ""))]
+        matched = [r for r in rows if any(x in str(r.get("account_id", "")) for x in ACCOUNTS)]
         if matched:
             rows = matched
 
@@ -1457,6 +1573,8 @@ def main():
         if m is None or m not in cur["managers"]:
             continue
         d = str(r.get("date"))[:10]
+        if not camp_active_on(r.get("campaign"), d):
+            continue        # до передачі РК — ліди/витрати іншого менеджера
         sp = round(num(r.get("spend")), 4); ld = int(num(r.get("actions_lead")))
         lead_spend[m][d] = lead_spend[m].get(d, 0.0) + sp
         lead_leads[m][d] = lead_leads[m].get(d, 0) + ld

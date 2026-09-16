@@ -121,7 +121,7 @@ tr:hover td{background:var(--card2)}
 <div class="foot" id="foot"></div>
 
 <script>
-const COLORS={'Диана':'#4f8cff','Таня':'#3ecf8e','Алиса':'#f5b942','Саида':'#ff6b6b','Максим':'#ff6b6b','Даша':'#b47fff','Юлиана':'#2dd4bf','Мага':'#fb923c','Инста Париж':'#f472b6','Инста Прага':'#a3e635'};
+const COLORS={'Диана':'#4f8cff','Таня':'#3ecf8e','Алиса':'#f5b942','Саида':'#ff6b6b','Максим':'#ff6b6b','Даша':'#b47fff','Юлиана':'#2dd4bf','Мага':'#fb923c','Инста Париж':'#f472b6','Инста Прага':'#a3e635','Даник':'#22d3ee','Саида НВ':'#f87171','Минск':'#e879f9'};
 const isInst=n=>String(n).startsWith('Инста');
 const MONTHS=['Січень','Лютий','Березень','Квітень','Травень','Червень','Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'];
 const fmt=(v,d=2)=>v==null||isNaN(v)?'—':'$'+Number(v).toFixed(d);
@@ -229,7 +229,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   };
   // пороги CPA по містах (правило Ірини): Прага <10 зел / до 15 жовт / далі черв;
   // Париж і Барселона <20 / до 25 / далі червоний
-  const cpaT=city=>city==='Прага'?[10,15]:[20,25];
+  const cpaT=city=>(city==='Прага'||city==='Минск')?[10,15]:[20,25];
   const cpaColor=(city,v)=>{if(v==null)return '';const t=cpaT(city);
     return v<t[0]?'var(--good)':v<t[1]?'var(--warn)':'var(--bad)'};
 
@@ -448,7 +448,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   }
 
   // ---- групування рядків по місту -> менеджеру (щоб було видно, хто є хто) ----
-  const CITY_ORDER=['Прага','Париж','Барселона'];
+  const CITY_ORDER=['Прага','Париж','Минск','Барселона'];
   const groupByMgr=list=>{
     const g=new Map();
     for(const r of list){ if(hid(r.m)) continue; if(!g.has(r.m)) g.set(r.m,[]); g.get(r.m).push(r); }
