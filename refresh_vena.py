@@ -459,7 +459,9 @@ def fetch_raw_index():
         n = 0; last = ""; since = 0
         for r in rows:
             ctf = str(r.get("created_time") or "")
-            if ctf and ctf[:19] >= ADSQUIZ_PLAN["base_at"]:
+            # заявки з власного квіза viniry-kyiv.github.io (raw містить "quiz-site") не
+            # витрачають ліміт ADSQuiz — не рахуємо їх у залишок
+            if ctf and ctf[:19] >= ADSQUIZ_PLAN["base_at"] and "quiz-site" not in str(r.get("raw") or ""):
                 since += 1
             ph = phone9(_phone_of(r))
             if not ph:
