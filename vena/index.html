@@ -330,6 +330,13 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     } else if(tk.daysLeft!=null&&tk.daysLeft<=7){
       A.push(['warn',`🔑 Токен Meta закінчується <b>${tkDate}</b> (через ${tk.daysLeft} дн.) — онови заздалегідь: Graph API Explorer → Generate → Extend → GitHub Secrets → META_TOKEN.`]);
     }
+    // Ліміт лідів плану ADSQuiz: при <=3 переставляємо квіз-оголошення на власний квіз.
+    const aq=D.adsquiz||{};
+    if(aq.left!=null&&aq.left<=3){
+      A.push(['bad',`🧩 <b>На ADSQuiz лишилось ${aq.left} лід(ів)</b> з плану (${aq.since} прийшло після 17.09) — час переставити квіз-оголошення на <a href="${aq.newUrl}" target="_blank">${(aq.newUrl||'').replace('https://','')}</a>.`]);
+    } else if(aq.left!=null&&aq.left<=8){
+      A.push(['warn',`🧩 На ADSQuiz лишилось <b>${aq.left}</b> лідів з плану — скоро переставляти квіз на ${(aq.newUrl||'').replace('https://','')}.`]);
+    }
     const deadAdsets=new Set();
     for(const a of (AS[k]||[])){
       if(isInst(a.m)||a.act===false) continue;   // інста -> ліди в Direct; вимкнений -> дій не потребує
