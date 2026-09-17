@@ -906,6 +906,13 @@ def main():
         raw_idx, raw_stats = fetch_raw_index()
     except Exception as e:
         print("raw index FAIL:", e); raw_idx, raw_stats = {}, {}
+    # якщо сира вкладка, яка читалась минулого разу, цього разу не прочиталась (збій
+    # моста Apps Script) — атрибуція записів по її напрямку дасть нулі. Тоді ад-сети/
+    # креативи НЕ перебудовуємо, а лишаємо попередні (17.09 21:09 Відень так «обнулився»)
+    _prev_tabs = set(((cur.get("_diag") or {}).get("rawTabs") or {}).keys())
+    _raw_missing = sorted(_prev_tabs - set(raw_stats.keys()))
+    if _raw_missing:
+        print("СИРІ ВКЛАДКИ НЕ ПРОЧИТАЛИСЬ:", ", ".join(_raw_missing), "-> ад-сети/креативи лишаю попередні")
     try:
         bk = compute_bookings(raw_idx)
     except Exception as e:
@@ -995,14 +1002,17 @@ def main():
             if isinstance(prev, dict):
                 merged = dict(prev); merged.update(fresh); fresh = merged
             out[field] = fresh
-        try:
-            _merge_periods("creatives", build_creatives(PERIODS, bk, raw_map))
-        except Exception as e:
-            print("creatives failed:", e)
-        try:
-            _merge_periods("adsets", build_adsets(PERIODS, bk, raw_map))
-        except Exception as e:
-            print("adsets failed:", e)
+        if _raw_missing:
+            print("creatives/adsets: carry over (сирі вкладки неповні)")
+        else:
+            try:
+                _merge_periods("creatives", build_creatives(PERIODS, bk, raw_map))
+            except Exception as e:
+                print("creatives failed:", e)
+            try:
+                _merge_periods("adsets", build_adsets(PERIODS, bk, raw_map))
+            except Exception as e:
+                print("adsets failed:", e)
 
         try:
             sc = fetch_scaling()
@@ -1030,7 +1040,9 @@ def main():
     except Exception as e:
         print("факт адміна failed:", str(e)[:140], "-> лишаю попередній")
 
-    out["_diag"] = {"rawTabs": raw_stats}
+    # при збої зберігаємо попередній список вкладок, щоб наступний запуск знову звіряв з повним набором
+    out["_diag"] = {"rawTabs": (dict(((cur.get("_diag") or {}).get("rawTabs") or {}), **raw_stats)
+                                if _raw_missing else raw_stats)}
     # залишок лідів плану ADSQuiz (див. ADSQUIZ_PLAN); None, якщо квіз-лист не прочитався
     _qs = (raw_stats.get("Квіз Ирина") or {}).get("since_base")
     out["adsquiz"] = {"baseAt": ADSQUIZ_PLAN["base_at"], "baseLeft": ADSQUIZ_PLAN["base_left"],
