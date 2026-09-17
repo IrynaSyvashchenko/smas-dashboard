@@ -78,15 +78,6 @@ tr:hover td{background:var(--card2)}
 <div class="phint" id="phint"></div>
 <div class="cards" id="cards"></div>
 
-<h2>Динаміка (з 15.08)</h2>
-<div class="chartbox"><h3>Ціна ліда (CPL) по днях, $</h3><canvas id="cplChart"></canvas></div>
-<div class="chartbox"><h3>Ліди по днях</h3><canvas id="leadsChart"></canvas></div>
-<div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
-<div id="dayCharts">
-<div class="chartbox"><h3>Ціна запису (CPA) по днях, $</h3><canvas id="cpaDayChart"></canvas><div class="phint" style="margin:8px 0 0">CPA за день = витрати дня / записи серед лідів, створених того дня. За день записів мало → лінія стрибуча з пропусками, це нормально.</div></div>
-<div class="chartbox"><h3>Записи по днях (за датою ліда)</h3><canvas id="bkDayChart"></canvas></div>
-</div>
-
 <h2 id="asTitle">Ад-сети (аудиторія · гео)</h2>
 <div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно. Рядки згруповані по місту й менеджеру.</div>
 <div class="tabs sm" id="asTabs"></div>
@@ -97,11 +88,22 @@ tr:hover td{background:var(--card2)}
 
 <h2 id="crTitle">Креативи</h2>
 <div class="tabs sm" id="crTabs"></div>
-<div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
 <div style="overflow-x:auto"><table id="crTable">
 <thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th><th>% бюдж.·7д</th><th>Вердикт</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="crNote"></div>
+
+<div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
+
+<h2>Динаміка (з 15.08)</h2>
+<div class="chartbox"><h3>Ціна ліда (CPL) по днях, $</h3><canvas id="cplChart"></canvas></div>
+<div class="chartbox"><h3>Ліди по днях</h3><canvas id="leadsChart"></canvas></div>
+<div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
+<div id="dayCharts">
+<div class="chartbox"><h3>Ціна запису (CPA) по днях, $</h3><canvas id="cpaDayChart"></canvas><div class="phint" style="margin:8px 0 0">CPA за день = витрати дня / записи серед лідів, створених того дня. За день записів мало → лінія стрибуча з пропусками, це нормально.</div></div>
+<div class="chartbox"><h3>Записи по днях (за датою ліда)</h3><canvas id="bkDayChart"></canvas></div>
+</div>
+
 
 <div id="scSection" style="display:none">
 <h2>🚀 Масштабування</h2>
@@ -419,14 +421,16 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <h3>${name} <span class="city">${m.city}</span>${off?' <span class="tag" style="background:var(--card2);color:var(--mut);border:1px solid var(--border)">вимкнена</span>':''}</h3>
         <div class="bigrow">
           <div><div class="big">${fmt(cpl)}</div><div class="lbl">CPL · лід</div></div>
-          <div><div class="big"${cCol?` style="color:${cCol}"`:''}>${fmt(cpa)}</div><div class="lbl">CPA · запис</div></div>
+          ${fbk?`<div><div class="big"${fCol?` style="color:${fCol}"`:''}>${fmt(fSp/fbk)}</div><div class="lbl">CPA · факт (звіт адмінів)${factLbl(name)}</div></div>`
+                    :`<div><div class="big"${cCol?` style="color:${cCol}"`:''}>${fmt(cpa)}</div><div class="lbl">CPA · запис</div></div>`}
         </div>
         <div class="row"><span class="l">Витрати</span><b>${fmt(sp)}</b></div>
         <div class="row"><span class="l">Ліди</span><b>${ld}</b></div>
-        <div class="row"><span class="l">Записи</span><b>${bk}</b></div>
-        ${konsRows(name,m,p,sp)}
         ${fbk!=null?`<div class="row"><span class="l">Записи · факт адміна${factLbl(name)}</span><b>${fbk}${(()=>{const base=factBase(name,p)??bk;return fbk>base?` <span class="tag y">+${fbk-base} без позначки</span>`:'';})()}</b></div>
-        <div class="row"><span class="l">CPA · факт${factLbl(name)}</span><b${fCol?` style="color:${fCol}"`:''}>${fmt(fbk?fSp/fbk:null)}</b></div>`:''}
+        <div class="row"><span class="l">Записи · по таблиці лідів</span><b>${bk}</b></div>
+        <div class="row"><span class="l">CPA · по таблиці лідів</span><b${cCol?` style="color:${cCol}"`:''}>${fmt(cpa)}</b></div>`
+        :`<div class="row"><span class="l">Записи</span><b>${bk}</b></div>`}
+        ${konsRows(name,m,p,sp)}
         <div class="row"><span class="l">Конверсія в запис</span><b>${conv}</b></div>
         ${isInst(name)?'<div class="row"><span class="l">Канал</span><b>Instagram Direct</b></div>':''}
         ${roasRows(m,sp,bk)}
@@ -440,13 +444,15 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       <h3>Разом <span class="city">всі міста</span></h3>
       <div class="bigrow">
         <div><div class="big">${fmt(tCpl)}</div><div class="lbl">CPL · лід</div></div>
-        <div><div class="big">${fmt(tCpa)}</div><div class="lbl">CPA · запис</div></div>
+        ${(FD&&tFbk)?`<div><div class="big">${fmt(tSp/tFbk)}</div><div class="lbl">CPA · факт (звіт адмінів)</div></div>`
+            :`<div><div class="big">${fmt(tCpa)}</div><div class="lbl">CPA · запис</div></div>`}
       </div>
       <div class="row"><span class="l">Витрати</span><b>${fmt(tSp)}</b></div>
       <div class="row"><span class="l">Ліди</span><b>${tLd}</b></div>
-      <div class="row"><span class="l">Записи</span><b>${tBk}</b></div>
       ${FD?`<div class="row"><span class="l">Записи · факт адміна</span><b>${tFbk}${tFbk>tBk?` <span class="tag y">+${tFbk-tBk} без позначки</span>`:''}</b></div>
-      <div class="row"><span class="l">CPA · факт</span><b>${fmt(tFbk?tSp/tFbk:null)}</b></div>`:''}
+      <div class="row"><span class="l">Записи · по таблиці лідів</span><b>${tBk}</b></div>
+      <div class="row"><span class="l">CPA · по таблиці лідів</span><b>${fmt(tCpa)}</b></div>`
+      :`<div class="row"><span class="l">Записи</span><b>${tBk}</b></div>`}
       <div class="row"><span class="l">Конверсія в запис</span><b>${tLd?Math.round(tBk/tLd*1000)/10+'%':'—'}</b></div>
       ${tRoas!=null?`<div class="row"><span class="l">ROAS (оцінка)</span><b>${tRoas.toFixed(2)}</b></div>`:''}
     </div>`+cards.join(''));
