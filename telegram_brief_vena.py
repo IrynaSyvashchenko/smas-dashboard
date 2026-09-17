@@ -138,6 +138,18 @@ def token_warn(d):
         return "🔑 Токен Meta закінчується %s (через %d дн.) — онови заздалегідь.\n\n" % (str(tk.get("expires") or "")[:10], dl)
     return ""
 
+def adsquiz_warn(d):
+    """Залишок лідів плану ADSQuiz: <=3 — час переставити квіз-оголошення на новий квіз."""
+    aq = d.get("adsquiz") or {}
+    left = aq.get("left")
+    if left is None:
+        return ""
+    if left <= 3:
+        return "🧩 На ADSQuiz лишилось %d лід(ів) з плану — ПЕРЕСТАВЛЯЙ квіз-оголошення на %s (скажи Клоду «переставити квіз»).\n\n" % (left, aq.get("newUrl") or "")
+    if left <= 8:
+        return "🧩 На ADSQuiz лишилось %d лідів з плану — скоро переставляти квіз на %s.\n\n" % (left, aq.get("newUrl") or "")
+    return ""
+
 def main():
     if not TOKEN:
         sys.exit("ERROR: TELEGRAM_BOT_TOKEN не заданий (додай секрет у GitHub Actions)")
@@ -150,7 +162,7 @@ def main():
     if not manual and not (21 <= hour <= 23):
         print("skip: not the evening refresh (updated hour=%d)" % hour)
         return
-    text = token_warn(d) + build(d, use_today=(hour >= 12))
+    text = token_warn(d) + adsquiz_warn(d) + build(d, use_today=(hour >= 12))
     send(text)
     print("sent, %d chars" % len(text))
 

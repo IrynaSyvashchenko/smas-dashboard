@@ -250,6 +250,11 @@ def classify(campaign):
             return ("lead", m)
     return (None, None)
 
+# Ліміт лідів плану ADSQuiz: 17.09.2026 13:20 Київ лічильник «Your plan» показував 35.
+# Рахуємо квіз-ліди з листа «Квіз Ирина» після цього моменту -> залишок; алерт при <=3
+# (дашборд + вечірній бриф) = сигнал переставити квіз-оголошення на viniry-kyiv.github.io.
+ADSQUIZ_PLAN = {"base_at": "2026-09-17T13:20:00", "base_left": 35}
+
 def _is_quiz_adset(adset):
     a = str(adset or "").lower()
     return "quiz" in a or "квіз" in a or "квиз" in a
@@ -451,12 +456,15 @@ def fetch_raw_index():
     # build_creatives підставлять id по назві з інсайтів Meta.
     try:
         rows = fetch_sheet_rows("Квіз Ирина")
-        n = 0; last = ""
+        n = 0; last = ""; since = 0
         for r in rows:
+            ctf = str(r.get("created_time") or "")
+            if ctf and ctf[:19] >= ADSQUIZ_PLAN["base_at"]:
+                since += 1
             ph = phone9(_phone_of(r))
             if not ph:
                 continue
-            ct = str(r.get("created_time") or "")[:10]
+            ct = ctf[:10]
             if ct and ct > last:
                 last = ct
             cur = idx.get(ph)
@@ -465,7 +473,7 @@ def fetch_raw_index():
                            "ad": str(r.get("utm_content") or ""),
                            "adset": str(r.get("utm_term") or ""), "quiz": True}
             n += 1
-        stats["Квіз Ирина"] = {"rows": n, "last_lead": last}
+        stats["Квіз Ирина"] = {"rows": n, "last_lead": last, "since_base": since}
         print("  квіз-вкладка       -> %d лідів (останній %s)" % (n, last or "?"))
     except Exception as e:
         print("  квіз-вкладка ->", str(e)[:60])
@@ -1021,6 +1029,11 @@ def main():
         print("факт адміна failed:", str(e)[:140], "-> лишаю попередній")
 
     out["_diag"] = {"rawTabs": raw_stats}
+    # залишок лідів плану ADSQuiz (див. ADSQUIZ_PLAN); None, якщо квіз-лист не прочитався
+    _qs = (raw_stats.get("Квіз Ирина") or {}).get("since_base")
+    out["adsquiz"] = {"baseAt": ADSQUIZ_PLAN["base_at"], "baseLeft": ADSQUIZ_PLAN["base_left"],
+                      "since": _qs, "left": (ADSQUIZ_PLAN["base_left"] - _qs) if _qs is not None else None,
+                      "newUrl": "https://viniry-kyiv.github.io"}
 
     for m, node in out["managers"].items():
         b = node.get("bookings") or 0
