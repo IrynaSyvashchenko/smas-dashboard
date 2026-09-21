@@ -150,6 +150,16 @@ def adsquiz_warn(d):
         return "🧩 На ADSQuiz лишилось %d лідів з плану — скоро переставляти квіз на %s.\n\n" % (left, aq.get("newUrl") or "")
     return ""
 
+def datacheck_warn(d):
+    """Напрямки, де ліди CRM за 7 днів не привʼязуються до оголошень (сира вкладка замерзла)."""
+    dc = d.get("dataCheck") or {}
+    bad = [(m, c) for m, c in dc.items() if c.get("leads7") and not c.get("ok")]
+    if not bad:
+        return ""
+    parts = ["%s (%d з %d лідів, вкладка з %s)" % (m, c.get("matched7", 0), c.get("leads7", 0),
+             str(c.get("rawLast") or "?")[:10]) for m, c in bad]
+    return "🧩 Дані по ад-сетах/креативах неповні: " + "; ".join(parts) + ". Перепідключи експорт форми Meta -> Google Таблиці.\n\n"
+
 def main():
     if not TOKEN:
         sys.exit("ERROR: TELEGRAM_BOT_TOKEN не заданий (додай секрет у GitHub Actions)")
@@ -162,7 +172,7 @@ def main():
     if not manual and not (21 <= hour <= 23):
         print("skip: not the evening refresh (updated hour=%d)" % hour)
         return
-    text = token_warn(d) + adsquiz_warn(d) + build(d, use_today=(hour >= 12))
+    text = token_warn(d) + adsquiz_warn(d) + datacheck_warn(d) + build(d, use_today=(hour >= 12))
     send(text)
     print("sent, %d chars" % len(text))
 

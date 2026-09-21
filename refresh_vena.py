@@ -958,6 +958,39 @@ def main():
             new_reg[m] = mreg
             node["bookingsToday"] = sum(1 for d in mreg.values() if d == today_local)
         out["_bookReg"] = new_reg
+        # ---- перевірка повноти даних: чи ліди CRM за 7 днів знаходять привʼязку до
+        # оголошення у сирих вкладках (fbK/fbT/...). Якщо форму в Meta оновили, у неї
+        # новий id, і експорт у Google Таблиці до нової версії не підключений — сира
+        # вкладка «замерзає», записи перестають потрапляти в ад-сети/креативи (21.09:
+        # Київ 20 записів на картці і 2 в ад-сетах). Алерт на дашборді + в брифі.
+        try:
+            _d7 = (datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=6)).isoformat()
+            _raw_last = {}
+            for _ph, _h in raw_idx.items():
+                _m = _h.get("m"); _ct = str(_h.get("ct") or "")
+                if _m and _ct > _raw_last.get(_m, ""):
+                    _raw_last[_m] = _ct
+            chk = {}
+            for m, v in bk.items():
+                n = k = nb = kb = 0
+                for L in v.get("leadsQ", []):
+                    if not L.get("cd") or L["cd"] < _d7:
+                        continue
+                    hit = raw_idx.get(L["ph"])
+                    ok = bool(hit and (hit.get("ad_id") or hit.get("adset_id") or hit.get("quiz")))
+                    n += 1; k += 1 if ok else 0
+                    if L.get("bk"):
+                        nb += 1; kb += 1 if ok else 0
+                chk[m] = {"leads7": n, "matched7": k, "book7": nb, "bookMatched7": kb,
+                          "rawLast": _raw_last.get(m, ""),
+                          "ok": (n == 0) or (k >= n * 0.8)}
+            out["dataCheck"] = chk
+            for m, c in chk.items():
+                if not c["ok"]:
+                    print("  ПЕРЕВІРКА ДАНИХ: %s — з %d лідів за 7 дн. привʼязано %d (сира вкладка востаннє %s)"
+                          % (m, c["leads7"], c["matched7"], c["rawLast"] or "?"))
+        except Exception as e:
+            print("dataCheck failed:", e)
 
     # ---- періодні метрики + ад-сети/креативи ----
     td = datetime.date.fromisoformat(TODAY)
