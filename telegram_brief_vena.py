@@ -153,7 +153,8 @@ def adsquiz_warn(d):
 def datacheck_warn(d):
     """Напрямки, де ліди CRM за 7 днів не привʼязуються до оголошень (сира вкладка замерзла)."""
     dc = d.get("dataCheck") or {}
-    bad = [(m, c) for m, c in dc.items() if c.get("leads7") and not c.get("ok")]
+    # без rawLast = вкладка не прочиталась саме в цьому запуску (тимчасово) — у бриф не тягнемо
+    bad = [(m, c) for m, c in dc.items() if c.get("leads7") and not c.get("ok") and c.get("rawLast")]
     if not bad:
         return ""
     parts = ["%s (%d з %d лідів, вкладка з %s)" % (m, c.get("matched7", 0), c.get("leads7", 0),
