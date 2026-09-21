@@ -332,6 +332,13 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     } else if(tk.daysLeft!=null&&tk.daysLeft<=7){
       A.push(['warn',`🔑 Токен Meta закінчується <b>${tkDate}</b> (через ${tk.daysLeft} дн.) — онови заздалегідь: Graph API Explorer → Generate → Extend → GitHub Secrets → META_TOKEN.`]);
     }
+    // Перевірка повноти даних: ліди CRM за 7 днів без привʼязки до оголошення (сира вкладка не оновлюється)
+    const DC=D.dataCheck||{};
+    for(const [m,c] of Object.entries(DC)){
+      if(c.ok||!c.leads7) continue;
+      const pct=Math.round(c.matched7/c.leads7*100);
+      A.push(['bad',`🧩 <b>${m}: дані по ад-сетах/креативах неповні</b> — з ${c.leads7} лідів за 7 дн. до оголошення привʼязано лише ${c.matched7} (${pct}%), записів ${c.bookMatched7} з ${c.book7}. Сира вкладка Meta→Google Таблиці востаннє отримала лід ${c.rawLast?new Date(c.rawLast).toLocaleDateString('uk-UA'):'—'}. Найчастіше причина: форму оновили в Meta, і експорт у таблицю треба підключити заново до нової версії форми. Поки це не зроблено, картка напрямку правдива, а розбивка по ад-сетах і креативах — ні.`]);
+    }
     // Ліміт лідів плану ADSQuiz: при <=3 переставляємо квіз-оголошення на власний квіз.
     const aq=D.adsquiz||{};
     if(aq.left!=null&&aq.left<=3){
