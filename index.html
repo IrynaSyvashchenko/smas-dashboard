@@ -84,15 +84,6 @@ tr:hover td{background:var(--card2)}
 <div class="phint" id="phint"></div>
 <div class="cards" id="cards"></div>
 
-<h2>Динаміка (з 01.07)</h2>
-<div class="chartbox"><h3>Ціна ліда (CPL) по днях, $</h3><canvas id="cplChart"></canvas></div>
-<div class="chartbox"><h3>Ліди по днях</h3><canvas id="leadsChart"></canvas></div>
-<div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
-<div id="dayCharts">
-<div class="chartbox"><h3>Ціна запису (CPA) по днях, $</h3><canvas id="cpaDayChart"></canvas><div class="phint" style="margin:8px 0 0">CPA за день = витрати дня / записи серед лідів, створених того дня. За день записів мало → лінія стрибуча з пропусками, це нормально.</div></div>
-<div class="chartbox"><h3>Записи по днях (за датою ліда)</h3><canvas id="bkDayChart"></canvas></div>
-</div>
-
 <h2 id="asTitle">Ад-сети (аудиторія · гео)</h2>
 <div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно. Рядки згруповані по місту й менеджеру.</div>
 <div class="tabs sm" id="asTabs"></div>
@@ -103,11 +94,11 @@ tr:hover td{background:var(--card2)}
 
 <h2 id="crTitle">Креативи</h2>
 <div class="tabs sm" id="crTabs"></div>
-<div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
 <div style="overflow-x:auto"><table id="crTable">
 <thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th><th>% бюдж.·7д</th><th>Вердикт</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="crNote"></div>
+<div class="chartbox" style="margin-top:14px"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
 
 <div id="scSection" style="display:none">
 <h2>🚀 Масштабування</h2>
@@ -118,10 +109,21 @@ tr:hover td{background:var(--card2)}
 <div class="phint" id="scNote"></div>
 </div>
 
+<h2>📈 Динаміка по днях</h2>
+<div class="phint">Оберіть місяць — графіки перемальовуються тільки за нього, щоб лінії не зливались.</div>
+<div class="tabs sm" id="chTabs"></div>
+<div class="chartbox"><h3>Ціна ліда (CPL) по днях, $</h3><canvas id="cplChart"></canvas></div>
+<div class="chartbox"><h3>Ліди по днях</h3><canvas id="leadsChart"></canvas></div>
+<div class="chartbox"><h3>Витрати по днях, $</h3><canvas id="spendChart"></canvas></div>
+<div id="dayCharts">
+<div class="chartbox"><h3>Ціна запису (CPA) по днях, $</h3><canvas id="cpaDayChart"></canvas><div class="phint" style="margin:8px 0 0">CPA за день = витрати дня / записи серед лідів, створених того дня. За день записів мало → лінія стрибуча з пропусками, це нормально.</div></div>
+<div class="chartbox"><h3>Записи по днях (за датою ліда)</h3><canvas id="bkDayChart"></canvas></div>
+</div>
+
 <div class="foot" id="foot"></div>
 
 <script>
-const COLORS={'Диана':'#4f8cff','Таня':'#3ecf8e','Алиса':'#f5b942','Саида':'#ff6b6b','Максим':'#ff6b6b','Даша':'#b47fff','Юлиана':'#2dd4bf','Мага':'#fb923c','Инста Париж':'#f472b6','Инста Прага':'#a3e635','Даник':'#22d3ee','Саида НВ':'#f87171','Минск':'#e879f9'};
+const COLORS={'Диана':'#4f8cff','Таня':'#3ecf8e','Алиса':'#f5b942','Саида':'#ff6b6b','Максим':'#ff6b6b','Даша':'#b47fff','Юлиана':'#2dd4bf','Мага':'#fb923c','Инста Париж':'#f472b6','Инста Прага':'#a3e635','Даник':'#22d3ee','Карина':'#84cc16','Саида НВ':'#f87171','Минск':'#e879f9'};
 const isInst=n=>String(n).startsWith('Инста');
 const MONTHS=['Січень','Лютий','Березень','Квітень','Травень','Червень','Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'];
 const fmt=(v,d=2)=>v==null||isNaN(v)?'—':'$'+Number(v).toFixed(d);
@@ -406,22 +408,23 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       const bk=p.bk(m,name);
       tSp+=sp; tLd+=ld; tBk+=bk;
       if(m.check&&sp){ tRev+=bk*m.check.usd; tRevSp+=sp; }
-      const cpl=ld?sp/ld:null, cpa=bk?sp/bk:null, conv=ld?Math.round(bk/ld*1000)/10+'%':'—';
+      const cpl=ld?sp/ld:null, cpa=bk?sp/bk:null;
       const cCol=cpaColor(m.city,cpa);
       const fbk=factSum(name,p);                 // факт адміна за цей період (null = нема реєстру)
       if(fbk!=null){ tFbk+=fbk; }
       const fCol=fbk?cpaColor(m.city,sp/fbk):'';
+      const convBk=fbk!=null?fbk:bk, conv=ld?Math.round(convBk/ld*1000)/10+'%':'—';   // конверсія по факту, якщо реєстр є
       const off=m.act===false; cards.push(`<div class="card"${off?' style="opacity:.55"':''}>
         <h3>${name} <span class="city">${m.city}</span>${off?' <span class="tag" style="background:var(--card2);color:var(--mut);border:1px solid var(--border)">вимкнена</span>':''}</h3>
         <div class="bigrow">
           <div><div class="big">${fmt(cpl)}</div><div class="lbl">CPL · лід</div></div>
-          <div><div class="big"${cCol?` style="color:${cCol}"`:''}>${fmt(cpa)}</div><div class="lbl">CPA · запис</div></div>
+          <div><div class="big" style="color:${fbk!=null?(fCol||'var(--good)'):(cCol||'inherit')}">${fmt(fbk!=null?(fbk?sp/fbk:null):cpa)}</div><div class="lbl">${fbk!=null?'CPA · факт адміна':'CPA · запис (CRM)'}</div></div>
         </div>
+        ${fbk!=null?`<div class="row"><span class="l">Записи · факт адміна</span><b style="color:var(--good);font-size:1.02rem">${fbk}${fbk>bk?` <span class="tag y">+${fbk-bk} без позначки</span>`:''}</b></div>`:''}
         <div class="row"><span class="l">Витрати</span><b>${fmt(sp)}</b></div>
         <div class="row"><span class="l">Ліди</span><b>${ld}</b></div>
-        <div class="row"><span class="l">Записи</span><b>${bk}</b></div>
-        ${fbk!=null?`<div class="row"><span class="l">Записи · факт адміна</span><b>${fbk}${fbk>bk?` <span class="tag y">+${fbk-bk} без позначки</span>`:''}</b></div>
-        <div class="row"><span class="l">CPA · факт</span><b${fCol?` style="color:${fCol}"`:''}>${fmt(fbk?sp/fbk:null)}</b></div>`:''}
+        <div class="row"><span class="l">Записи · CRM</span><b>${bk}</b></div>
+        ${fbk!=null?`<div class="row"><span class="l">CPA · CRM</span><b${cCol?` style="color:${cCol}"`:''}>${fmt(cpa)}</b></div>`:''}
         <div class="row"><span class="l">Конверсія в запис</span><b>${conv}</b></div>
         ${isInst(name)?'<div class="row"><span class="l">Канал</span><b>Instagram Direct</b></div>':''}
         ${roasRows(m,sp,bk)}
@@ -435,14 +438,14 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       <h3>Разом <span class="city">всі міста</span></h3>
       <div class="bigrow">
         <div><div class="big">${fmt(tCpl)}</div><div class="lbl">CPL · лід</div></div>
-        <div><div class="big">${fmt(tCpa)}</div><div class="lbl">CPA · запис</div></div>
+        <div><div class="big" style="color:${FD?'var(--good)':'inherit'}">${fmt(FD?(tFbk?tSp/tFbk:null):tCpa)}</div><div class="lbl">${FD?'CPA · факт адміна':'CPA · запис (CRM)'}</div></div>
       </div>
+      ${FD?`<div class="row"><span class="l">Записи · факт адміна</span><b style="color:var(--good);font-size:1.02rem">${tFbk}${tFbk>tBk?` <span class="tag y">+${tFbk-tBk} без позначки</span>`:''}</b></div>`:''}
       <div class="row"><span class="l">Витрати</span><b>${fmt(tSp)}</b></div>
       <div class="row"><span class="l">Ліди</span><b>${tLd}</b></div>
-      <div class="row"><span class="l">Записи</span><b>${tBk}</b></div>
-      ${FD?`<div class="row"><span class="l">Записи · факт адміна</span><b>${tFbk}${tFbk>tBk?` <span class="tag y">+${tFbk-tBk} без позначки</span>`:''}</b></div>
-      <div class="row"><span class="l">CPA · факт</span><b>${fmt(tFbk?tSp/tFbk:null)}</b></div>`:''}
-      <div class="row"><span class="l">Конверсія в запис</span><b>${tLd?Math.round(tBk/tLd*1000)/10+'%':'—'}</b></div>
+      <div class="row"><span class="l">Записи · CRM</span><b>${tBk}</b></div>
+      ${FD?`<div class="row"><span class="l">CPA · CRM</span><b>${fmt(tCpa)}</b></div>`:''}
+      <div class="row"><span class="l">Конверсія в запис</span><b>${tLd?Math.round((FD?tFbk:tBk)/tLd*1000)/10+'%':'—'}</b></div>
       ${tRoas!=null?`<div class="row"><span class="l">ROAS (оцінка)</span><b>${tRoas.toFixed(2)}</b></div>`:''}
     </div>`+cards.join(''));
   }
@@ -730,27 +733,39 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   renderCreatives('yest');
   renderScaling();
 
-  // ---- графіки (з 1 липня — червневий розгін тільки шумить) ----
+  // ---- графіки по днях: окремо по кожному місяцю (перемикач) ----
   const CHART_FROM='2026-07-01';
-  const chartDates=allDates.filter(d=>d>=CHART_FROM);
-  const mkDs=key=>Object.entries(M).filter(([n])=>!hid(n)).map(([n,m])=>({label:n,data:chartDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:m[key][i]}),borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
-  new Chart(cplChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('cpl')},options:{interaction:{mode:'index',intersect:false}}});
-  new Chart(leadsChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('leads')},options:{interaction:{mode:'index',intersect:false}}});
-  new Chart(spendChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDs('spend')},options:{interaction:{mode:'index',intersect:false}}});
-
-  // ---- CPA і записи ПО ДНЯХ (лінії, як CPL). Потребує bookingsDay з пайплайну ----
+  const MON_NAMES={'01':'Січень','02':'Лютий','03':'Березень','04':'Квітень','05':'Травень','06':'Червень','07':'Липень','08':'Серпень','09':'Вересень','10':'Жовтень','11':'Листопад','12':'Грудень'};
+  const chMonths=[...new Set(allDates.filter(d=>d>=CHART_FROM).map(d=>d.slice(0,7)))].sort();
+  let chMon=chMonths[chMonths.length-1]||null;
+  const chCharts={};
   const hasBD=Object.values(M).some(m=>Array.isArray(m.bookingsDay));
-  if(hasBD){
-    const mkDayDs=fn=>Object.entries(M).filter(([n])=>!isInst(n)&&!hid(n)).map(([n,m])=>({label:n,
-      data:chartDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:fn(m,i);}),
-      borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2}));
-    const cpaDay=(m,i)=>{const b=(m.bookingsDay||[])[i]||0;return b?Math.round((m.spend[i]||0)/b*100)/100:null;};
-    const bkDay=(m,i)=>{const v=(m.bookingsDay||[])[i];return v==null?null:v;};
-    new Chart(cpaDayChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDayDs(cpaDay)},options:{interaction:{mode:'index',intersect:false}}});
-    new Chart(bkDayChart,{type:'line',data:{labels:chartDates.map(dd),datasets:mkDayDs(bkDay)},options:{interaction:{mode:'index',intersect:false}}});
-  } else {
-    document.getElementById('dayCharts').innerHTML='<div class="chartbox phint">Графіки CPA і записів по днях з\'являться після наступного оновлення даних (додається щоденна кількість записів).</div>';
+  function drawCharts(){
+    const chartDates=allDates.filter(d=>d.slice(0,7)===chMon);
+    const lab=chartDates.map(dd);
+    const alive=ds=>ds.data.some(v=>v!=null&&v!==0);   // хто в цьому місяці не крутився — не малюємо
+    const mkDs=key=>Object.entries(M).filter(([n])=>!hid(n)).map(([n,m])=>({label:n,data:chartDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:m[key][i]}),borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2})).filter(alive);
+    const opt={interaction:{mode:'index',intersect:false}};
+    const put=(id,cfg)=>{ if(chCharts[id]) chCharts[id].destroy(); chCharts[id]=new Chart(document.getElementById(id),cfg); };
+    put('cplChart',{type:'line',data:{labels:lab,datasets:mkDs('cpl')},options:opt});
+    put('leadsChart',{type:'line',data:{labels:lab,datasets:mkDs('leads')},options:opt});
+    put('spendChart',{type:'line',data:{labels:lab,datasets:mkDs('spend')},options:opt});
+    if(hasBD){
+      const cpaDay=(m,i)=>{const b=(m.bookingsDay||[])[i]||0;return b?Math.round((m.spend[i]||0)/b*100)/100:null;};
+      const bkDay=(m,i)=>{const v=(m.bookingsDay||[])[i];return v==null?null:v;};
+      const mkDayDs=fn=>Object.entries(M).filter(([n])=>!isInst(n)&&!hid(n)).map(([n,m])=>({label:n,data:chartDates.map(d=>{const i=m.dates.indexOf(d);return i<0?null:fn(m,i);}),borderColor:COLORS[n],backgroundColor:COLORS[n],tension:.3,spanGaps:true,pointRadius:2})).filter(alive);
+      put('cpaDayChart',{type:'line',data:{labels:lab,datasets:mkDayDs(cpaDay)},options:opt});
+      put('bkDayChart',{type:'line',data:{labels:lab,datasets:mkDayDs(bkDay)},options:opt});
+    }
   }
+  if(!hasBD) document.getElementById('dayCharts').innerHTML='<div class="chartbox phint">Графіки CPA і записів по днях зʼявляться після наступного оновлення даних.</div>';
+  const chTabsEl=document.getElementById('chTabs');
+  if(chTabsEl){
+    chTabsEl.innerHTML=chMonths.map(mo=>`<button data-mo="${mo}"${mo===chMon?' class="on"':''}>${MON_NAMES[mo.slice(5)]||mo}</button>`).join('');
+    chTabsEl.addEventListener('click',e=>{const b=e.target.closest('button'); if(!b) return; chMon=b.dataset.mo; [...chTabsEl.children].forEach(x=>x.classList.toggle('on',x===b)); drawCharts();});
+  }
+  drawCharts();
+
 
   document.getElementById('foot').innerHTML='Ліди таргетолога Ірини · Записи в періоді = записи серед лідів, <b>створених</b> у цьому періоді (запис приходить на лід через 1–5 днів, тому за 1 день їх майже завжди мало) · «Нові записи сьогодні» вгорі = позначки запису, що з’явились у таблиці сьогодні (незалежно від дати ліда)<br>'+
     'Воронка ліда (див. таблицю ад-сетів): <b>Нецільові</b> (не з міста / номер не існує / нема WhatsApp / дубль / випадковий) → проблема <b>таргетингу</b>. '+
