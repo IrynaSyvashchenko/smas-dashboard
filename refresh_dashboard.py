@@ -49,6 +49,10 @@ NB_CAMPS    = set(NB_SEED)   # + назви кампаній нового каб
 # РК, яка ПЕРЕЙШЛА до іншого менеджера: до дати — не наша (ліди Жені), з дати — Даника.
 # Ключ = підрядок назви кампанії, значення = перша дата, з якої рахуємо.
 CAMP_SINCE  = {"Женя_16.09_Дан": "2026-09-16"}
+# РК, яка перейшла від одного НАШОГО менеджера до іншого (обидва періоди наші):
+# ключ = підрядок назви РК, значення = (новий менеджер, перша його дата).
+# Мага пішов 27.09 — його РК з 28.09 веде Сюзанна (форму замінено на «...Сьюзанна»).
+CAMP_MOVE   = {"13.07.26_Paris_Maga": ("Сюзанна", "2026-09-28")}
 DATE_FROM = "2026-06-20"
 TODAY     = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=2))).date().isoformat()  # празька дата, щоб «Сьогодні» збігалося з «Оновлено» навіть уночі
 DATA_FILE = "data.json"
@@ -68,6 +72,14 @@ LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Ali
            "Сюзанна": ("Danik", "Данік", "Даник", "Сьюзанна", "Сюзанна", "Suzanna"),
            # Каріна (Париж, з 18.09): РК «18.09.26_Paris_Karina»
            "Карина": ("Karina", "Каріна", "Карина")}
+
+def camp_mgr(campaign, date, mgr):
+    """Власник РК НА КОНКРЕТНУ ДАТУ: після дати передачі — новий менеджер."""
+    c = str(campaign or ""); d = str(date or "")[:10]
+    for key, (new_m, since) in CAMP_MOVE.items():
+        if key in c and d and d >= since:
+            return new_m
+    return mgr
 
 def camp_active_on(campaign, date):
     """False, якщо кампанія в CAMP_SINCE і дата раніша за дату передачі."""
@@ -456,7 +468,8 @@ def classify(campaign):
     for m, kw in LEAD_KW.items():
         kws = kw if isinstance(kw, tuple) else (kw,)
         if any(k.lower() in cl for k in kws):
-            return ("lead", m)
+            # РК могла перейти до іншого менеджера — періодні агрегати віддаємо новому
+            return ("lead", camp_mgr(c, TODAY, m))
     return (None, None)
 
 def meta_token_info():
@@ -997,7 +1010,7 @@ def fetch_raw_map(barca_camps=frozenset()):
             if not ph or (not ad_id and not as_id):
                 continue
             _k, _m = classify(r.get("campaign_name"))
-            mgr = _m or default_mgr
+            mgr = camp_mgr(r.get("campaign_name"), r.get("created_time"), _m or default_mgr)
             if not mgr:
                 continue
             if not camp_active_on(r.get("campaign_name"), r.get("created_time")):
@@ -1246,6 +1259,7 @@ def build_adset_hist(cur, bk, raw_map, raw_ok):
         aid = str(r.get("adset_id") or ""); d = str(r.get("date") or "")[:10]
         if not aid or not d:
             continue
+        m = camp_mgr(r.get("campaign"), d, m)
         h = fresh.setdefault(aid, {"m": m, "adset": r.get("adset_name"),
                                    "campaign": r.get("campaign"), "days": {}})
         if r.get("adset_name"): h["adset"] = r.get("adset_name")
@@ -1607,6 +1621,9 @@ def main():
         d = str(r.get("date"))[:10]
         if not camp_active_on(r.get("campaign"), d):
             continue        # до передачі РК — ліди/витрати іншого менеджера
+        m = camp_mgr(r.get("campaign"), d, m)
+        if m not in cur["managers"]:
+            continue
         sp = round(num(r.get("spend")), 4); ld = int(num(r.get("actions_lead")))
         lead_spend[m][d] = lead_spend[m].get(d, 0.0) + sp
         lead_leads[m][d] = lead_leads[m].get(d, 0) + ld
