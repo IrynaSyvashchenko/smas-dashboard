@@ -52,7 +52,7 @@ CAMP_SINCE  = {"Женя_16.09_Дан": "2026-09-16"}
 # РК, яка перейшла від одного НАШОГО менеджера до іншого (обидва періоди наші):
 # ключ = підрядок назви РК, значення = (новий менеджер, перша його дата).
 # Мага пішов — його РК з 27.09 веде Сюзанна (форму замінено на «...Сьюзанна»).
-CAMP_MOVE   = {"13.07.26_Paris_Maga": ("Сюзанна", "2026-09-27")}
+CAMP_MOVE   = {"13.07.26_Paris_Maga": ("Мага", "Сюзанна", "2026-09-27")}   # (до, після, з дати)
 DATE_FROM = "2026-06-20"
 TODAY     = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=2))).date().isoformat()  # празька дата, щоб «Сьогодні» збігалося з «Оновлено» навіть уночі
 DATA_FILE = "data.json"
@@ -74,11 +74,15 @@ LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Ali
            "Карина": ("Karina", "Каріна", "Карина")}
 
 def camp_mgr(campaign, date, mgr):
-    """Власник РК НА КОНКРЕТНУ ДАТУ: після дати передачі — новий менеджер."""
+    """Власник РК НА КОНКРЕТНУ ДАТУ. Повертає СТАРОГО менеджера до дати передачі
+    і нового — з неї; classify() віддає поточного власника (для періодних агрегатів),
+    тому тут не можна покладатись на mgr як на «старого»."""
     c = str(campaign or ""); d = str(date or "")[:10]
-    for key, (new_m, since) in CAMP_MOVE.items():
-        if key in c and d and d >= since:
-            return new_m
+    for key, (old_m, new_m, since) in CAMP_MOVE.items():
+        if key in c:
+            if not d:
+                return new_m
+            return new_m if d >= since else old_m
     return mgr
 
 def camp_active_on(campaign, date):
