@@ -224,6 +224,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
 
   // ROAS = записи x середній чек / витрати. Оцінка: запис ще не оплачена процедура.
   const CURSIGN={EUR:'€',CZK:'Kč',USD:'$'};
+  // bk — записи для розрахунку: CRM, а де їх не ведуть (Instagram Direct) — факт адміна
   const roasRows=(m,sp,bk)=>{
     const c=m.check;
     if(!c||!sp) return '';
@@ -328,7 +329,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     }
     const deadAdsets=new Set();
     for(const a of (AS[k]||[])){
-      if(isInst(a.m)||hid(a.m)||a.act===false) continue;   // інста -> ліди в Direct; вимкнений -> дій не потребує
+      if(isDirect(a.m)||hid(a.m)||a.act===false) continue;   // ліди в Direct (Meta не віддає) -> «0 лідів» тут нічого не означає; вимкнений -> дій не потребує
       if(a.spend>=5&&a.leads===0){
         deadAdsets.add(a.adset);
         A.push(['bad',`💸 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> витрачено, <b>0 лідів</b> — перевір або вимкни.`]);
@@ -428,8 +429,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         <div class="row"><span class="l">Записи · CRM</span><b>${bk}</b></div>
         ${fbk!=null?`<div class="row"><span class="l">CPA · CRM</span><b${cCol?` style="color:${cCol}"`:''}>${fmt(cpa)}</b></div>`:''}
         <div class="row"><span class="l">Конверсія в запис</span><b>${conv}</b></div>
-        ${isInst(name)?'<div class="row"><span class="l">Канал</span><b>Instagram Direct</b></div>':''}
-        ${roasRows(m,sp,bk)}
+        ${isDirect(name)?'<div class="row"><span class="l">Канал</span><b>Instagram Direct</b></div>':''}
+        ${roasRows(m,sp,(bk||fbk||0))}
         ${metaRows(m,p)}
         ${p.extra(m)}
       </div>`);
