@@ -44,7 +44,8 @@ ACCOUNT   = "873265084670144"
 NEW_ACCOUNT = "990427180610562"
 ACCOUNTS    = (ACCOUNT, NEW_ACCOUNT)
 NB_SUFFIX   = " НВ"
-NB_SEED     = {"16.09_Saida_Paris", "16.09_Minsk"}
+NB_SEED     = {"16.09_Saida_Paris", "16.09_Minsk",
+               "28.09_Instagram_повідомлення_Tanya", "27.09_Instagram_traffic_Tanya"}
 NB_CAMPS    = set(NB_SEED)   # + назви кампаній нового кабінету, які віддала Meta
 # РК, яка ПЕРЕЙШЛА до іншого менеджера: до дати — не наша (ліди Жені), з дати — Даника.
 # Ключ = підрядок назви кампанії, значення = перша дата, з якої рахуємо.
@@ -127,6 +128,12 @@ ADMIN_GID = "1593394532"
 NB_ADMIN_SS  = "1JMTDqWIXaurzqDJeqiDymL37MTBtvB6wQNtIb98EHJg"   # «отчет Наталья Владимировна»
 NB_ADMIN_GID = "450427268"                                        # лист «отчет фб»
 
+# Instagram-РК нового кабінету (з 27.09): ціль «повідомлення/профіль», тому Meta НЕ
+# віддає лідів (actions_lead = 0). Ліди й записи беремо з реєстру НВ — рядки
+# таргетолога Ірини, адмін «Таня», «название инст» = @smas_lifting.paris_.
+NB_INST_MGR   = "Таня НВ"
+REG_LEADS_MGR = (NB_INST_MGR,)   # кому ліди беруться з реєстру, а НЕ з Meta
+
 def _admin_mgr(name):
     """«название инст» з реєстру -> менеджер дашборда. None = не наш/нерозпізнаний."""
     n = str(name or "").lower()
@@ -155,7 +162,7 @@ def fetch_admin_fact():
      "unmapped": {назва: записів}} (нерозпізнані кампанії — щоб помітити нову)."""
     rows = fetch_sheet_rows(gid=ADMIN_GID, ss=ADMIN_SS)
     year = datetime.date.fromisoformat(TODAY).year   # дати в реєстрі без року (dd.mm)
-    monthly, daily, unmapped = {}, {}, {}
+    monthly, daily, unmapped, leads_daily = {}, {}, {}, {}
     for r in rows:
         if "ирин" not in str(r.get("таргетолог") or "").lower():
             continue
@@ -189,8 +196,16 @@ def fetch_admin_fact():
             except ValueError:
                 continue
             tot = int(num(r.get("всего_в_запись") or r.get("в_запись_всего")))
+            lds = int(num(r.get("новые_заявки")))
             n = str(r.get("название_инст") or "").lower(); adm = str(r.get("админ") or "").lower()
-            mgr = "Минск" if ("минск" in n or "minsk" in n or "алина" in adm) else ("Саида НВ" if "париж" in n else None)
+            if "минск" in n or "minsk" in n or "алина" in adm:
+                mgr = "Минск"
+            elif "таня" in adm and n.startswith("@"):
+                mgr = NB_INST_MGR      # @smas_lifting.paris_ — Instagram-РК, Direct веде Таня
+            elif "париж" in n or "paris" in n:
+                mgr = "Саида НВ"       # «лиды Париж» / «сайт Париж» — лід-форми Саиды
+            else:
+                mgr = None
             if mgr is None:
                 if tot:
                     unmapped["НВ:" + (n or "?")] = unmapped.get("НВ:" + (n or "?"), 0) + tot
@@ -198,9 +213,23 @@ def fetch_admin_fact():
             mk, ds = dt.isoformat()[:7], dt.isoformat()
             monthly.setdefault(mk, {})[mgr] = monthly.get(mk, {}).get(mgr, 0) + tot
             daily.setdefault(mgr, {})[ds] = daily.get(mgr, {}).get(ds, 0) + tot
+            if lds:
+                leads_daily.setdefault(mgr, {})[ds] = leads_daily.get(mgr, {}).get(ds, 0) + lds
     except Exception as e:
         print("  реєстр НВ FAIL ->", str(e)[:80])
-    return {"monthly": monthly, "daily": daily, "unmapped": unmapped}
+    return {"monthly": monthly, "daily": daily, "unmapped": unmapped,
+            "leadsDaily": leads_daily}
+
+
+_ADMIN_FACT_CACHE = {}
+
+
+def admin_fact():
+    """fetch_admin_fact() один раз за прогін: потрібен і для лідів Instagram-РК
+    (до побудови вузлів), і для факт-записів у кінці."""
+    if "v" not in _ADMIN_FACT_CACHE:
+        _ADMIN_FACT_CACHE["v"] = fetch_admin_fact()
+    return _ADMIN_FACT_CACHE["v"]
 
 # Нові менеджери: вузол у data.json створюється автоматично при першому запуску
 MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "2026-07-09"},
@@ -210,6 +239,7 @@ MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "20
                      "Сюзанна": {"city": "Париж", "start": "2026-09-24"},
                      "Карина": {"city": "Париж", "start": "2026-09-18"},
                      "Саида НВ": {"city": "Париж", "start": "2026-09-16"},
+                     NB_INST_MGR: {"city": "Париж", "start": "2026-09-27"},
                      "Минск":  {"city": "Минск", "start": "2026-09-16"},
                      INST_MGR_PARIS:  {"city": "Париж", "start": "2026-06-20"},
                      INST_MGR_PRAGUE: {"city": "Прага", "start": "2026-06-20"}}
@@ -236,6 +266,7 @@ AVG_CHECK = {   # (сума, валюта). Париж/Барселона — ц
     "Сюзанна": (159, "EUR"),  # Париж, з 24.09 (та сама РК, нова форма)
     "Карина": (159, "EUR"),   # Париж (з 18.09), офер 159€
     "Саида НВ": (159, "EUR"), # новий кабінет, оффер 159€ (бордо/тіффані 16.09)
+    NB_INST_MGR: (159, "EUR"),# Instagram-РК: 2 креативи 159€ (моделі) + 1 фото 199€
     "Минск":  (260, "BYN"),   # «для моделей» 260 BYN замість 430
 
     INST_MGR_PARIS: (159, "EUR"), INST_MGR_PRAGUE: (3990, "CZK"),
@@ -1623,6 +1654,23 @@ def main():
             cd_ = camp_days.setdefault(cn, {"m": m, "days": {}}).setdefault("days", {}).setdefault(d, [0.0, 0])
             cd_[0] += sp; cd_[1] += ld
 
+    # ліди Instagram-РК нового кабінету — з реєстру НВ («новые заявки» за день).
+    # Meta для цілі «повідомлення/профіль» лідів не віддає, тому підставляємо лише
+    # там, де в Meta 0 — подвоєння неможливе.
+    try:
+        _rl = admin_fact().get("leadsDaily") or {}
+    except Exception as e:
+        _rl = {}; print("  ліди з реєстру FAIL ->", str(e)[:80])
+    for m in REG_LEADS_MGR:
+        if m not in lead_leads:
+            continue
+        n_ = 0
+        for d, v in (_rl.get(m) or {}).items():
+            if not lead_leads[m].get(d):
+                lead_leads[m][d] = int(v); n_ += int(v)
+        if n_:
+            print("  %s: %d лідів з реєстру НВ (Meta їх не бачить)" % (m, n_))
+
     # ліди Instagram Direct — вручну від Ірини (Meta їх не бачить як lead-екшн)
     for m, days in INST_MANUAL.items():
         if m in lead_leads:
@@ -1877,7 +1925,7 @@ def main():
     # Реєстр АДМІНІСТРАТОРА (доступ з 04.08) — авто-«факт» записів замість ручних чисел.
     # Рядки таргетолога Ірини по днях: «в запись всего» = записи менеджера за день.
     try:
-        af = fetch_admin_fact()
+        af = admin_fact()
         fact = {mk: dict(v) for mk, v in af["monthly"].items()}
         for mk, v in FACT_BOOKINGS.items():
             fact.setdefault(mk, {}).update(v)      # ручні числа мають пріоритет (липень звірений)
