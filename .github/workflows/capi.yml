@@ -1,0 +1,57 @@
+name: CAPI CRM push
+
+# Передає в Meta етапи лідів (initial_lead / booked / lost) по Lead ID — набір даних SMAS CRM.
+# Поки що лише ручний запуск: спершу тест із кодом тестової події, потім справжня відправка.
+on:
+  workflow_dispatch:
+    inputs:
+      test_event_code:
+        description: "Код тестової події з Events Manager (порожньо = справжня відправка)"
+        required: false
+        default: ""
+      only:
+        description: "Лише цей менеджер (порожньо = всі з SOURCES)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write              # комітимо capi_sent.json після справжньої відправки
+
+concurrency:
+  group: capi-push
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Send CRM lead stages to Meta
+        env:
+          CAPI_TOKEN: ${{ secrets.CAPI_TOKEN }}
+          CAPI_TEST_CODE: ${{ inputs.test_event_code }}
+          CAPI_ONLY: ${{ inputs.only }}
+          SHEETS_URL: ${{ secrets.SHEETS_URL }}
+          SHEETS_KEY: ${{ secrets.SHEETS_KEY }}
+        run: python capi_push.py
+
+      - name: Commit sent register
+        if: ${{ inputs.test_event_code == '' }}
+        run: |
+          if [ -n "$(git status --porcelain capi_sent.json)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add capi_sent.json
+            git commit -m "auto: CAPI sent register $(date -u +'%Y-%m-%d %H:%M UTC')"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              echo "push retry $i"; sleep 5
+            done
+          fi
