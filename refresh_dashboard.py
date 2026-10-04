@@ -966,6 +966,9 @@ RAW_GID = {
 # у частини рядків Meta не віддала назву оголошення через права доступу
 BROKEN_AD = "не хватает разрешений"
 RAW_STATS = {}   # {вкладка: {"rows": N, "last_lead": "YYYY-MM-DD"}} — чи жива сира вкладка
+# Усі ліди сирих вкладок із менеджером (і без ad/adset ID) — для capi_push.py:
+# Conversions API для CRM шле в Meta етапи ліда по його Lead ID (колонка `id`).
+RAW_LEADS = []   # [{"id", "created", "phone", "m", "adset_id", "tab"}]
 # Нові сирі вкладки (після зміни лід-форм експорт пише в НОВІ вкладки — 06.08 знайдено
 # fb6..fb9, "fb1,"). Менеджер визначається ПО РЯДКУ через classify(campaign_name),
 # тож майбутні нові вкладки досить дописати сюди за назвою.
@@ -1032,6 +1035,7 @@ def fetch_raw_map(barca_camps=frozenset()):
     втрачає ліди (перевірено: tochka15 — 62 ліди в Meta, 18 при join по назві)."""
     raw_map, got = {}, {}
     RAW_STATS.clear()   # діагностика: чи вкладка ЖИВА (наповнюється новими лідами)
+    RAW_LEADS.clear()
 
     def _ingest(rows_all, default_mgr, tabname):
         """Рядки однієї вкладки -> raw_map. Менеджер рядка = classify(campaign_name)
@@ -1046,15 +1050,17 @@ def fetch_raw_map(barca_camps=frozenset()):
             as_id  = _strip_id_prefix(r.get("adset_id"))
             if BROKEN_AD in ad_id: ad_id = ""    # Meta не віддала ad_id через права
             if BROKEN_AD in as_id: as_id = ""
-            # для АД-СЕТ-атрибуції досить adset_id — не викидаємо рядок лише через брак ad_id
-            if not ph or (not ad_id and not as_id):
-                continue
             _k, _m = classify(r.get("campaign_name"))
             mgr = camp_mgr(r.get("campaign_name"), r.get("created_time"), _m or default_mgr)
             if not mgr:
                 continue
             if not camp_active_on(r.get("campaign_name"), r.get("created_time")):
                 continue        # лід до передачі РК — належить попередньому менеджеру
+            RAW_LEADS.append({"id": r.get("id"), "created": r.get("created_time"), "phone": ph,
+                              "m": mgr, "adset_id": as_id, "tab": tabname})
+            # для АД-СЕТ-атрибуції досить adset_id — не викидаємо рядок лише через брак ad_id
+            if not ph or (not ad_id and not as_id):
+                continue
             raw_map[ph] = {"m": mgr, "ad_id": ad_id, "adset_id": as_id,
                            "ad":    str(r.get("ad_name") or ""),
                            "adset": str(r.get("adset_name") or "")}
