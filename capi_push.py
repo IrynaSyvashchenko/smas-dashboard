@@ -66,7 +66,9 @@ def crm_status(r):
     if rd.is_booked(r):
         return "booked"
     s = rd._statuses(r)
-    if "отказ" in s or re.search(r"не\s*удобн", s):
+    # відмова = «Отказался» або «не удобны даты для записи». «Неудобно говорить» —
+    # людині просто незручно говорити зараз, це НЕ відмова (до 05.10 помилково йшло в lost)
+    if "отказ" in s or re.search(r"не\s*удобн\w*\s+дат", s):
         return "lost"
     return None
 
