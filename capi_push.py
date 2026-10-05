@@ -62,13 +62,17 @@ def to_ts(v):
     return int(dt.timestamp())
 
 
+# Відмова (lost), правило Ірини 05.10: «Отказался», «не удобны даты для записи»,
+# «неинтересно», «не устраивает цена». «Неудобно говорить» — людині просто незручно
+# говорити зараз, це НЕ відмова (до 05.10 помилково йшло в lost).
+LOST_RE = re.compile(r"отказ|не\s*удобн\w*\s+дат|не\s*интересн|не\s*устраива\w*\s+цен|цен\w*\s+не\s*устраива")
+LOST_RULES = 2   # версія правила: при зміні старі збіги позначаються без відправки (як перший запуск)
+
+
 def crm_status(r):
     if rd.is_booked(r):
         return "booked"
-    s = rd._statuses(r)
-    # відмова = «Отказался» або «не удобны даты для записи». «Неудобно говорить» —
-    # людині просто незручно говорити зараз, це НЕ відмова (до 05.10 помилково йшло в lost)
-    if "отказ" in s or re.search(r"не\s*удобн\w*\s+дат", s):
+    if LOST_RE.search(rd._statuses(r)):
         return "lost"
     return None
 
@@ -170,6 +174,8 @@ def build_events(now):
     # лідів ≤ 7 днів, а старші позначаємо відомими без відправки.
     # «_baseline: true» — формат до 05.10, коли слали тільки Алису.
     based = set(sent.get("_baselines") or (["Алиса"] if sent.get("_baseline") else []))
+    # нове правило відмови: lost старших лідів — без відправки (коли змінився статус, невідомо)
+    lost_based = sent.get("_lost_rules") == LOST_RULES
     leads, skip = raw_leads(now)
     status = crm_statuses(sorted({x["m"] for x in leads.values()} | set(MOVE_GROUP)))
     known_only = []          # (lead_id, етап) — позначити без відправки
@@ -187,7 +193,7 @@ def build_events(now):
             todo.append(("initial_lead", min(created + 60, now)))
         stage = stage_of(mgr, x["phone"], status)
         if stage and stage not in done:
-            limit = WIN_STAGE if mgr in based else WIN_INITIAL
+            limit = WIN_STAGE if mgr in based and (stage != "lost" or lost_based) else WIN_INITIAL
             if age <= limit:
                 todo.append((stage, now))
             else:
@@ -277,6 +283,8 @@ def main():
                 lst.append(stage)
         # базовий запуск нових менеджерів зараховуємо лише тоді, коли всі батчі пройшли
         sent["_baselines"] = sorted(based | (set() if failed else set(stats)))
+        if not failed:
+            sent["_lost_rules"] = LOST_RULES
         sent.pop("_baseline", None)
         for k in stale:
             sent.pop(k, None)
