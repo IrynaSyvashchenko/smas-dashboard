@@ -141,6 +141,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // приховані менеджери (hide з пайплайна: Юлиана + інста, 26.08) — не показуємо ніде,
   // але дані в data.json продовжують збиратись
   const hid=n=>!!(M[n]?.hide);
+  // менеджер більше не працює (end з пайплайна: Мага, Даник) — картка лише в періодах, де є його дні
+  const inPeriod=(m,p)=>!m.end||m.dates.some(d=>d<=m.end&&p.pred(d));
   const allDates=[...new Set(Object.values(M).flatMap(m=>m.dates))].sort();
   const today=allDates[allDates.length-1];
   const yest=addD(today,-1);
@@ -400,7 +402,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     let tSp=0,tLd=0,tBk=0,tFbk=0,tRev=0,tRevSp=0;
     const cards=[];
     // картки ВПОРЯДКОВАНІ по містах: Прага -> Париж -> Барселона; вимкнені (act===false) — в кінець
-    const ordered=Object.keys(M).filter(n=>!hid(n)).sort((a,b)=>{
+    const ordered=Object.keys(M).filter(n=>!hid(n)&&inPeriod(M[n],p)).sort((a,b)=>{
       const xa=M[a].act===false?1:0, xb=M[b].act===false?1:0; if(xa!==xb) return xa-xb; const ia=CITY_ORDER.indexOf(M[a].city), ib=CITY_ORDER.indexOf(M[b].city);
       return ((ia<0?99:ia)-(ib<0?99:ib))||a.localeCompare(b);
     });
