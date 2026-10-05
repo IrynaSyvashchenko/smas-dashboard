@@ -67,12 +67,22 @@ def to_ts(v):
 # говорити зараз, це НЕ відмова (до 05.10 помилково йшло в lost).
 LOST_RE = re.compile(r"отказ|не\s*удобн\w*\s+дат|не\s*интересн|не\s*устраива\w*\s+цен|цен\w*\s+не\s*устраива")
 LOST_RULES = 2   # версія правила: при зміні старі збіги позначаються без відправки (як перший запуск)
+# «Уже записана» = людину записав ІНШИЙ таргетолог. Для дашборда й звітів це не запис
+# Ірини (rd.is_booked), але для Meta людина записалась, тобто лід якісний -> шлемо booked
+# (Ірина, 05.10). «Записана в другом месте» (інша клініка) — не запис ніде.
+OTHER_RE = re.compile(r"уже\s*запис")
+OTHER_RULES = 1  # версія правила для «уже записана» (окремо, щоб не чіпати звичайні записи)
+RANK = {"booked": 3, "booked_other": 2, "lost": 1}   # запис важливіший за відмову
 
 
 def crm_status(r):
+    """'booked' | 'booked_other' (запис іншого таргетолога) | 'lost' | None."""
     if rd.is_booked(r):
         return "booked"
-    if LOST_RE.search(rd._statuses(r)):
+    s = rd._statuses(r)
+    if OTHER_RE.search(s) and "другом мест" not in s:
+        return "booked_other"
+    if LOST_RE.search(s):
         return "lost"
     return None
 
@@ -98,7 +108,7 @@ def crm_rows(mgr):
 
 
 def crm_statuses(mgrs):
-    """{менеджер: {phone9: 'booked'|'lost'}}; запис важливіший за відмову."""
+    """{менеджер: {phone9: статус з crm_status}}; лишається найважливіший за RANK."""
     out = {}
     for mgr in mgrs:
         st = out.setdefault(mgr, {})
@@ -107,15 +117,15 @@ def crm_statuses(mgrs):
                 continue
             k = rd.phone9(r.get("phone_number"))
             s = crm_status(r)
-            if k and s and st.get(k) != "booked":
+            if k and s and RANK[s] > RANK.get(st.get(k), 0):
                 st[k] = s
     return out
 
 
 def stage_of(mgr, phone, status):
     group = MOVE_GROUP if mgr in MOVE_GROUP else (mgr,)
-    found = {status.get(m, {}).get(phone) for m in group}
-    return "booked" if "booked" in found else ("lost" if "lost" in found else None)
+    found = [s for s in (status.get(m, {}).get(phone) for m in group) if s]
+    return max(found, key=RANK.get) if found else None
 
 
 def own_adsets():
@@ -174,8 +184,10 @@ def build_events(now):
     # лідів ≤ 7 днів, а старші позначаємо відомими без відправки.
     # «_baseline: true» — формат до 05.10, коли слали тільки Алису.
     based = set(sent.get("_baselines") or (["Алиса"] if sent.get("_baseline") else []))
-    # нове правило відмови: lost старших лідів — без відправки (коли змінився статус, невідомо)
-    lost_based = sent.get("_lost_rules") == LOST_RULES
+    # нове правило (відмова / запис іншого таргетолога): етапи старших лідів — без відправки,
+    # бо коли змінився статус, невідомо. Звичайні записи це не зачіпає.
+    fresh_rule = {"lost": sent.get("_lost_rules") == LOST_RULES,
+                  "booked_other": sent.get("_other_rules") == OTHER_RULES}
     leads, skip = raw_leads(now)
     status = crm_statuses(sorted({x["m"] for x in leads.values()} | set(MOVE_GROUP)))
     known_only = []          # (lead_id, етап) — позначити без відправки
@@ -192,13 +204,14 @@ def build_events(now):
         if "initial_lead" not in done and age <= WIN_INITIAL:
             todo.append(("initial_lead", min(created + 60, now)))
         stage = stage_of(mgr, x["phone"], status)
-        if stage and stage not in done:
-            limit = WIN_STAGE if mgr in based and (stage != "lost" or lost_based) else WIN_INITIAL
+        ev = "booked" if stage == "booked_other" else stage
+        if ev and ev not in done:
+            limit = WIN_STAGE if mgr in based and fresh_rule.get(stage, True) else WIN_INITIAL
             if age <= limit:
-                todo.append((stage, now))
+                todo.append((ev, now))
             else:
                 s["too_old"] += 1
-                known_only.append((lid, stage))
+                known_only.append((lid, ev))
         for name, t in todo:
             s[name] += 1
             events.append({
@@ -285,6 +298,7 @@ def main():
         sent["_baselines"] = sorted(based | (set() if failed else set(stats)))
         if not failed:
             sent["_lost_rules"] = LOST_RULES
+            sent["_other_rules"] = OTHER_RULES
         sent.pop("_baseline", None)
         for k in stale:
             sent.pop(k, None)
