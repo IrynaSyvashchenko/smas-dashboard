@@ -1627,6 +1627,18 @@ def main():
         matched = [r for r in rows if any(x in str(r.get("account_id", "")) for x in ACCOUNTS)]
         if matched:
             rows = matched
+    # діагностика: які кампанії взагалі віддала Meta (06.10 нова Instagram-РК Тані
+    # «2.10_Instagram_повідомлення_Tanya» не з'являлась на дашборді — треба бачити чому)
+    meta_camps = {}
+    _d7s = (datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=6)).isoformat()
+    for r in rows:
+        _e = meta_camps.setdefault((str(r.get("account_id") or ""), str(r.get("campaign") or "")),
+                                   {"sp7": 0.0, "last": ""})
+        _dd_ = str(r.get("date") or "")[:10]
+        if num(r.get("spend")) > 0 and _dd_ > _e["last"]:
+            _e["last"] = _dd_
+        if _dd_ >= _d7s:
+            _e["sp7"] += num(r.get("spend"))
 
     with open(DATA_FILE, encoding="utf-8") as f:
         cur = json.load(f)
@@ -2089,6 +2101,14 @@ def main():
         b = node.get("bookings") or 0; ts = node["totalSpend"]; tl = node["totalLeads"]
         node["cpa"] = round(ts / b, 2) if b else None
         node["conv"] = round(b / tl * 100, 1) if tl > 0 else None
+
+    _since = (datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=30)).isoformat()
+    out.setdefault("_diag", {})["metaCampaigns"] = [
+        {"acct": a, "name": n, "m": classify(n)[1], "last": e["last"], "sp7": round(e["sp7"], 2)}
+        for (a, n), e in sorted(meta_camps.items()) if e["last"] >= _since]
+    for x in out["_diag"]["metaCampaigns"]:
+        print("  Meta кампанія [%s] %-40s -> %-12s | остання витрата %s | 7 дн $%.2f"
+              % (x["acct"][-4:], x["name"][:40], x["m"], x["last"], x["sp7"]))
 
     compact = json.dumps(out, ensure_ascii=False, separators=(",", ":"))
     with open(DATA_FILE, "w", encoding="utf-8") as f:
