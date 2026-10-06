@@ -158,6 +158,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const FD=D.factDaily||null;
   const factSum=(name,p)=>{const f=FD&&FD[name]; if(!f) return null;
     let s=0; for(const dK in f){ if(p.pred(dK)) s+=f[dK]||0; } return s;};
+  // останній день, який адмін уже заповнив у реєстрі (сьогоднішній ще ні)
+  const lastFD=name=>{const f=FD&&FD[name]; if(!f) return null;
+    const ks=Object.keys(f).filter(d=>d<today).sort(); return ks.length?ks[ks.length-1]:null;};
 
   // ---- сьогодні: окрема чесна смужка (день ще неповний) ----
   const sumAll=(key,pred)=>Object.values(M).reduce((s,m)=>s+m.dates.reduce((a,d,i)=>a+(pred(d)?(m[key][i]||0):0),0),0);
@@ -329,64 +332,22 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     } else if(tk.daysLeft!=null&&tk.daysLeft<=7){
       A.push(['warn',`🔑 Токен Meta закінчується <b>${tkDate}</b> (через ${tk.daysLeft} дн.) — онови заздалегідь: Graph API Explorer → Generate → Extend → GitHub Secrets → META_TOKEN.`]);
     }
-    const deadAdsets=new Set();
-    for(const a of (AS[k]||[])){
-      if(isDirect(a.m)||hid(a.m)||a.act===false) continue;   // ліди в Direct (Meta не віддає) -> «0 лідів» тут нічого не означає; вимкнений -> дій не потребує
-      if(a.spend>=5&&a.leads===0){
-        deadAdsets.add(a.adset);
-        A.push(['bad',`💸 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> витрачено, <b>0 лідів</b> — перевір або вимкни.`]);
-      }
+    // Алерти рахує ПАЙПЛАЙН (build_alerts у refresh_dashboard.py) — той самий список
+    // іде в Telegram-бриф. Правило Ірини (06.10): тільки те, що зараз втрачає гроші,
+    // з цифрами, нормою міста, причиною й дією; зелених «можна масштабувати» тут немає.
+    // Ціна запису менеджера — за фактом адміна і лише по заповнених днях реєстру.
+    const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    for(const a of (D.alerts||[])){
+      if(hid(a.m)) continue;
+      const ads=a.adsets||[], cap=ads.length&&/^ад-сети/.test(ads[0])?ads[0]:null, items=cap?ads.slice(1):ads;
+      A.push(['bad',`🔴 ${a.html}`+
+        (a.why?`<div style="margin-top:4px">Причина: ${esc(a.why)}</div>`:'')+
+        (items.length?`<div style="margin-top:4px;color:var(--mut)">${esc(cap||'')}</div><ul style="margin:2px 0 0 18px;padding:0">${items.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'')+
+        (a.note?`<div style="margin-top:4px;color:var(--mut)">⚠ ${esc(a.note)}</div>`:'')+
+        `<div style="margin-top:4px"><b>→ ${esc(a.act)}</b></div>`]);
     }
-    // CPA (ціна запису) по АД-СЕТАХ за 7 днів. Прив'язку записів до ад-сета полагоджено
-    // (raw_map: phone->adset_id, без вимоги збігу менеджера — паризькі сирі вкладки перехресні),
-    // тому адсет-CPA тепер надійна. Пороги від чека міста: ≥25% або ≥$25 без записів — критично,
-    // ≥15% — попередження. Нові РК (<4 днів від старту) не судимо — записи ще доганяють ліди.
-    const dlv=m=>{const s=M[m]?.start;return s?Math.floor((new Date(today)-new Date(s))/864e5)+1:99;};
-    // запобіжник: якщо на ад-сети менеджера «сіло» менше 60% його записів за 7 днів
-    // (сира вкладка відстає/завмерла) — адсет-CPA завищена, такі алерти пропускаємо
-    const asBk7=new Map();
-    for(const a of (AS.d7||[])){ if(isInst(a.m)) continue; asBk7.set(a.m,(asBk7.get(a.m)||0)+(a.book||0)); }
-    const unrel=m=>{const c=M[m]?.bookings7d||0; return c>=5&&(asBk7.get(m)||0)<c*0.6;};
-    for(const a of (AS.d7||[])){
-      if(isInst(a.m)||hid(a.m)||a.act===false||deadAdsets.has(a.adset)||unrel(a.m)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
-      const chk=M[a.m]?.check?.usd;
-      if(a.spend>=25&&a.book===0)
-        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> за ${per} і <b>0 записів</b> — ліди не конвертяться.`]);
-      else if(chk&&a.cpa!=null&&a.cpa>=chk*0.25)
-        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — це ≥25% чека ${fmt(chk,0)}.`]);
-      else if(chk&&a.cpa!=null&&a.cpa>=chk*0.15)
-        A.push(['warn',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — дорожче за 15% чека ${fmt(chk,0)}.`]);
-    }
-    // алерти ДИНАМІКИ з життєвого циклу (рахує пайплайн): CPL зламався після зміни
-    // бюджету або нова РК горить без лідів — абсолютні пороги вище цього не ловлять
-    for(const r of (D.lifecycle||[])){
-      if(hid(r.m)) continue;
-      const v=r.verdict||{};
-      if(v.code==='degrade')
-        A.push(['bad',`📉 Ад-сет <b>${r.adset}</b> (${r.m}): ${v.text}.`]);
-      else if(v.code==='new_dead'&&!deadAdsets.has(r.adset))
-        A.push(['bad',`🆕 Ад-сет <b>${r.adset}</b> (${r.m}): ${v.text}.`]);
-      else if(v.code==='new_costly')
-        A.push(['warn',`🆕 Ад-сет <b>${r.adset}</b> (${r.m}): ${v.text}.`]);
-    }
-    for(const c of (CR[k]||[])){
-      if(deadAdsets.has(c.adset)||hid(c.m)) continue;   // алерт по цілому ад-сету вже є
-      if(c.act===false) continue;             // вимкнений креатив — дій не потребує
-      if(!isInst(c.m)&&c.spend>=5&&c.leads===0)   // для інсти «0 лідів» — не помилка (Direct)
-        A.push(['bad',`💸 Креатив <b>${c.name}</b> (${c.m}): <b>${fmt(c.spend)}</b> без лідів — вимикай.`]);
-      if(c.freq!=null&&c.freq>=2.5)
-        A.push(['bad',`🔁 Креатив <b>${c.name}</b> (${c.m}): частота <b>${c.freq}</b> — вигорів, потрібна заміна.`]);
-    }
-    for(const [k3,t] of misTag){
-      const [m3,n3,a3]=k3.split('|');
-      A.push(['warn',`⚠️ Meta ллє бюджет у слабший креатив: <b>${n3}</b> (${m3}) бере <b>${Math.round(t.share*100)}%</b> бюджету ад-сета «${a3}» за 7 днів, але за ${pmName}+${monthName} його запис <b>${fmt(t.mycpa)}</b> (${t.mybook??0} зап.) проти <b>${fmt(t.rcpa)}</b> (${t.rbook??0} зап.) у <b>${t.rival}</b>, якому дістаються крихти. Перевір: якщо вимкнути «жадібний», бюджет перетече на кращий.`]);
-    }
-    A.sort((a,b)=>(a[0]==='bad'?0:1)-(b[0]==='bad'?0:1));   // спочатку критичні
     const el=document.getElementById('alerts');
-    if(!A.length){
-      el.innerHTML=`<div class="alert ok">✅ Критичного нічого: гроші без лідів не горять, записи не задорогі, креативи не вигоріли.</div>`;
-      return;
-    }
+    if(!A.length){ el.innerHTML=''; return; }   // червоного немає — блоку немає
     const MAXV=4, html=t=>`<div class="alert ${t[0]==='warn'?'warn':''}">${t[1]}</div>`;
     let out=A.slice(0,MAXV).map(html).join('');
     if(A.length>MAXV)
@@ -399,7 +360,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     document.getElementById('phint').textContent=p.hint;
     buildAlerts(k);
     el.innerHTML='';
-    let tSp=0,tLd=0,tBk=0,tFbk=0,tRev=0,tRevSp=0;
+    let tSp=0,tLd=0,tBk=0,tFbk=0,tRev=0,tRevSp=0,tSpF=0,tLdF=0,tCut=null;
     const cards=[];
     // картки ВПОРЯДКОВАНІ по містах: Прага -> Париж -> Барселона; вимкнені (act===false) — в кінець
     const ordered=Object.keys(M).filter(n=>!hid(n)&&inPeriod(M[n],p)).sort((a,b)=>{
@@ -407,8 +368,10 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       return ((ia<0?99:ia)-(ib<0?99:ib))||a.localeCompare(b);
     });
     for(const name of ordered){ const m=M[name];
-      let sp=0,ld=0;
-      m.dates.forEach((d,i)=>{ if(p.pred(d)){ sp+=m.spend[i]||0; ld+=m.leads[i]||0; } });
+      let sp=0,ld=0,spF=0,ldF=0,cut=false;
+      const lf=lastFD(name);                     // останній день, який адмін уже заповнив
+      m.dates.forEach((d,i)=>{ if(p.pred(d)){ sp+=m.spend[i]||0; ld+=m.leads[i]||0;
+        if(!lf||d<=lf){ spF+=m.spend[i]||0; ldF+=m.leads[i]||0; } else if(m.spend[i]) cut=true; } });
       sp=Math.round(sp*100)/100;
       const bk=p.bk(m,name);
       tSp+=sp; tLd+=ld; tBk+=bk;
@@ -416,14 +379,17 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       const cpl=ld?sp/ld:null, cpa=bk?sp/bk:null;
       const cCol=cpaColor(m.city,cpa);
       const fbk=factSum(name,p);                 // факт адміна за цей період (null = нема реєстру)
-      if(fbk!=null){ tFbk+=fbk; }
-      const fCol=fbk?cpaColor(m.city,sp/fbk):'';
-      const convBk=fbk!=null?fbk:bk, conv=ld?Math.round(convBk/ld*1000)/10+'%':'—';   // конверсія по факту, якщо реєстр є
+      // ціна запису за фактом — лише по днях, які адмін уже заповнив: сьогоднішні витрати
+      // без внесених записів її завищували (Ірина, 06.10: «$22 і $42 у Даші»)
+      if(fbk!=null){ tFbk+=fbk; tSpF+=spF; tLdF+=ldF; if(cut&&(!tCut||lf<tCut)) tCut=lf; }
+      const fCpa=fbk?spF/fbk:null;
+      const fCol=fbk?cpaColor(m.city,fCpa):'';
+      const conv=fbk!=null?(ldF?Math.round(fbk/ldF*1000)/10+'%':'—'):(ld?Math.round(bk/ld*1000)/10+'%':'—');   // конверсія по факту — на тих самих днях
       const off=m.act===false; cards.push(`<div class="card"${off?' style="opacity:.55"':''}>
         <h3>${name} <span class="city">${m.city}</span>${off?' <span class="tag" style="background:var(--card2);color:var(--mut);border:1px solid var(--border)">вимкнена</span>':''}</h3>
         <div class="bigrow">
           <div><div class="big">${fmt(cpl)}</div><div class="lbl">CPL · лід</div></div>
-          <div><div class="big" style="color:${fbk!=null?(fCol||'var(--good)'):(cCol||'inherit')}">${fmt(fbk!=null?(fbk?sp/fbk:null):cpa)}</div><div class="lbl">${fbk!=null?'CPA · факт адміна':'CPA · запис (CRM)'}</div></div>
+          <div><div class="big" style="color:${fbk!=null?(fCol||'var(--good)'):(cCol||'inherit')}">${fmt(fbk!=null?fCpa:cpa)}</div><div class="lbl">${fbk!=null?('CPA · факт адміна'+(cut?` <span title="Ціна запису рахується лише по днях, які адмін уже вніс у реєстр">(до ${dd(lf)})</span>`:'')):'CPA · запис (CRM)'}</div></div>
         </div>
         ${fbk!=null?`<div class="row"><span class="l">Записи · факт адміна</span><b style="color:var(--good);font-size:1.02rem">${fbk}${fbk>bk?` <span class="tag y">+${fbk-bk} без позначки</span>`:''}</b></div>`:''}
         <div class="row"><span class="l">Витрати</span><b>${fmt(sp)}</b></div>
@@ -438,19 +404,19 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       </div>`);
     }
     // зведення по всіх менеджерах за обраний період
-    const tCpl=tLd?tSp/tLd:null, tCpa=tBk?tSp/tBk:null, tRoas=(tRev&&tRevSp)?tRev/tRevSp:null;
+    const tCpl=tLd?tSp/tLd:null, tCpa=tBk?tSp/tBk:null, tRoas=(tRev&&tRevSp)?tRev/tRevSp:null, tFCpa=tFbk?tSpF/tFbk:null;
     el.insertAdjacentHTML('beforeend',`<div class="card total">
       <h3>Разом <span class="city">всі міста</span></h3>
       <div class="bigrow">
         <div><div class="big">${fmt(tCpl)}</div><div class="lbl">CPL · лід</div></div>
-        <div><div class="big" style="color:${FD?'var(--good)':'inherit'}">${fmt(FD?(tFbk?tSp/tFbk:null):tCpa)}</div><div class="lbl">${FD?'CPA · факт адміна':'CPA · запис (CRM)'}</div></div>
+        <div><div class="big" style="color:${FD?'var(--good)':'inherit'}">${fmt(FD?tFCpa:tCpa)}</div><div class="lbl">${FD?('CPA · факт адміна'+(tCut?` (до ${dd(tCut)})`:'')):'CPA · запис (CRM)'}</div></div>
       </div>
       ${FD?`<div class="row"><span class="l">Записи · факт адміна</span><b style="color:var(--good);font-size:1.02rem">${tFbk}${tFbk>tBk?` <span class="tag y">+${tFbk-tBk} без позначки</span>`:''}</b></div>`:''}
       <div class="row"><span class="l">Витрати</span><b>${fmt(tSp)}</b></div>
       <div class="row"><span class="l">Ліди</span><b>${tLd}</b></div>
       <div class="row"><span class="l">Записи · CRM</span><b>${tBk}</b></div>
       ${FD?`<div class="row"><span class="l">CPA · CRM</span><b>${fmt(tCpa)}</b></div>`:''}
-      <div class="row"><span class="l">Конверсія в запис</span><b>${tLd?Math.round((FD?tFbk:tBk)/tLd*1000)/10+'%':'—'}</b></div>
+      <div class="row"><span class="l">Конверсія в запис</span><b>${FD?(tLdF?Math.round(tFbk/tLdF*1000)/10+'%':'—'):(tLd?Math.round(tBk/tLd*1000)/10+'%':'—')}</b></div>
       ${tRoas!=null?`<div class="row"><span class="l">ROAS (оцінка)</span><b>${tRoas.toFixed(2)}</b></div>`:''}
     </div>`+cards.join(''));
   }
@@ -778,7 +744,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     '<b>Ліквід</b> = реально вийшли на контакт.<br>'+
     '<b>Записи · факт адміна</b> — з реєстру адміністратора: скільки записів РЕАЛЬНО зроблено за період (за датою запису, включно зі старими лідами). «Записи» вище — позначки в CRM-таблиці (за датою створення ліда). Жовте «+N без позначки» = записи, яких менеджер не позначив у таблиці. Факт за сьогодні/вчора може добігти пізніше — адмін заповнює реєстр наприкінці дня.<br>'+
     '<b>ROAS (оцінка)</b> = записи × середній чек / витрати — орієнтир, бо запис ще не оплачена процедура. Чек: Париж/Барселона = ціна оферу кампанії; Прага: Диана = 2 999 Kč (акція для моделей з 18.07), Даша = 3 990 Kč.<br>'+
-    'Алерти про ціну запису (💰) рахуються завжди за останні 7 днів і порівнюються з чеком міста (попередження ≥ 15% чека, критично ≥ 25%).<br>'+
+    '<b>Алерти</b> (🔴 угорі) — лише те, що зараз втрачає гроші: запис менеджера за 7 днів (факт адміна, тільки заповнені дні реєстру) на ≥30% дорожчий за норму міста (усі менеджери Ірини в місті за 30 днів); ад-сет без жодного запису при витратах ≥ 3 цін запису міста; ад-сет чи креатив без лідів при витратах ≥ 4 цін ліда менеджера. CPA на картках «факт адміна» рахується лише по днях, які адмін уже вніс.<br>'+
     '<b>Инста Париж / Инста Прага</b> — Instagram-кампанії, ліди йдуть у Direct: витрати, CTR і частота — з Meta; ліди Парижа Meta рахує сама («ліди з листування»), записи Парижа і все по Празі Ірина вносить вручну.<br>'+
     '<b>Таня НВ</b> — Instagram-РК нового кабінету (з 27.09, цілі «повідомлення» і «відвідування профілю»): витрати з Meta, а ліди («новые заявки») і записи — автоматично з реєстру НВ, рядки адміна Тані по @smas_lifting.paris_. У таблицях ад-сетів і креативів лідів по ній не буде — Meta їх не віддає.<br>'+
     'Дані: Meta Ads + Google-таблиця'

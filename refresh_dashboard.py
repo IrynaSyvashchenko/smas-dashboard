@@ -1619,6 +1619,175 @@ def build_lifecycle(out):
                     "verdict": {"code": v[0], "cls": v[1], "text": v[2]}})
     return res
 
+# ---------------- АЛЕРТИ ----------------
+# Правило Ірини (06.10.2026): алерт = тільки те, що ЗАРАЗ втрачає гроші, і лише з фактами:
+# цифра -> норма МІСТА -> причина -> дія. Зелених («можна масштабувати») тут немає.
+# Норма — не «% чека» і не власна історія менеджера (так хронічно дорогий менеджер виглядав
+# «нормальним»), а всі менеджери Ірини в тому ж місті за 30 днів.
+# Записи: менеджер — за фактом адміна і лише по днях, які адмін уже заповнив; ад-сет — за
+# CRM (ліди, старші за 2 дні — лаг позначок). Сайт і Telegram-бриф показують цей самий список.
+ALERT_CPA_X   = 1.3   # запис менеджера ≥ на 30% дорожчий за норму міста
+ALERT_BOOK0_X = 3     # ад-сет без жодного запису при витратах ≥ 3 цін запису міста
+ALERT_LEAD0_X = 4     # без лідів при витратах ≥ 4 цін ліда менеджера (шанс випадковості ~2%)
+
+def build_alerts(out):
+    M = out.get("managers") or {}; FD = out.get("factDaily") or {}; H = out.get("adsHist") or {}
+    td = datetime.date.fromisoformat(TODAY)
+    D = lambda k: (td + datetime.timedelta(days=k)).isoformat()
+    dd = lambda s: "%s.%s" % (s[8:10], s[5:7])
+    shift = lambda s, k: (datetime.date.fromisoformat(s) + datetime.timedelta(days=k)).isoformat()
+    direct = (NB_INST_MGR, INST_MGR_PARIS, INST_MGR_PRAGUE)     # ліди в Direct — Meta їх не бачить
+    live = [m for m, n in M.items() if not n.get("hide") and not n.get("end")]
+
+    def mser(m, lo, hi):
+        n = M[m]; s = l = 0.0
+        for i, d in enumerate(n.get("dates") or []):
+            if lo <= d <= hi:
+                s += n["spend"][i] or 0; l += n["leads"][i] or 0
+        return s, l
+
+    def fact(m, lo, hi):
+        return sum(v or 0 for d, v in (FD.get(m) or {}).items() if lo <= d <= hi)
+
+    def last_fd(m):
+        ks = [d for d in (FD.get(m) or {}) if d < TODAY]
+        return max(ks) if ks else None
+
+    # ад-сети з власником ПО ДНЯХ (РК переходили між менеджерами — CAMP_MOVE)
+    act = {(a["m"], a["adset"]): a for a in (out.get("adsets", {}).get("d7") or []) if a.get("act")}
+    def adset_rows(lo, hi):
+        res = {}
+        for aid, r in H.items():
+            owner = camp_mgr(r.get("campaign"), TODAY, r.get("m"))
+            for d, v in (r.get("days") or {}).items():
+                if lo <= d <= hi and camp_mgr(r.get("campaign"), d, r.get("m")) == owner:
+                    e = res.setdefault(aid, {"m": owner, "adset": r.get("adset"), "s": 0.0, "l": 0, "b": 0})
+                    e["s"] += v[0] or 0; e["l"] += v[1] or 0; e["b"] += (v[2] if len(v) > 2 else 0) or 0
+        return res
+    mat_lo, mat_hi = D(-8), D(-2)            # ліди, старші за 2 дні: CRM-позначки вже стоять
+    mature = adset_rows(mat_lo, mat_hi)
+    crm30 = adset_rows(D(-32), D(-3))
+    last7 = adset_rows(D(-6), D(0))
+
+    city = {}
+    for m in live:
+        city.setdefault(M[m].get("city"), []).append(m)
+    norm = {}
+    for c, ms in city.items():
+        filled = [last_fd(m) for m in ms if last_fd(m)]
+        if not filled:
+            continue
+        end = min(filled); lo = shift(end, -29)
+        S = L = B = 0.0
+        for m in ms:
+            s, l = mser(m, lo, end); S += s; L += l; B += fact(m, lo, end)
+        cs = sum(e["s"] for e in crm30.values() if e["m"] in ms)
+        cb = sum(e["b"] for e in crm30.values() if e["m"] in ms)
+        norm[c] = {"end": end, "cpa": S / B if B else None, "cpl": S / L if L else None,
+                   "conv": B / L if L else None, "crm": cs / cb if cb else None}
+
+    def cpl_norm(m):
+        s, l = mser(m, D(-30), D(-1))
+        return s / l if l else None
+
+    alerts, in_mgr = [], set()
+    for m in live:
+        c = M[m].get("city"); nm = norm.get(c) or {}; e = last_fd(m)
+        # вікно = вкладка «7 днів» дашборда, але тільки дні, які адмін уже заповнив
+        # (сьогоднішні витрати без внесених записів завищують ціну — Ірина, 06.10)
+        lo = D(-6)
+        if not nm.get("cpa") or not e or e < lo:
+            continue
+        s, l = mser(m, lo, e); b = fact(m, lo, e)
+        if s < 2 * nm["cpa"]:
+            continue                      # замало витрат, щоб судити
+        cpa = s / b if b else None
+        if b and cpa < ALERT_CPA_X * nm["cpa"]:
+            continue
+        cpl = s / l if l else None; conv = b / l if l else None
+        # причина: ліди дорожчі за норму міста чи з лідів менше записів
+        why = []
+        if cpl and nm.get("cpl"):
+            why.append("ліди $%.2f (норма $%.2f)" % (cpl, nm["cpl"]))
+        if conv is not None and nm.get("conv"):
+            why.append("з лідів записується %.0f%% (норма %.0f%%)" % (100 * conv, 100 * nm["conv"]))
+        dear_leads = bool(cpl and nm.get("cpl") and cpl >= 1.2 * nm["cpl"])
+        low_conv = bool(conv is not None and nm.get("conv") and conv <= 0.8 * nm["conv"])
+        if low_conv and not dear_leads:
+            act_txt = "ліди не доходять до запису — глянь статуси в CRM (не прочитано / сміття) і якість аудиторії"
+        elif dear_leads and not low_conv:
+            act_txt = "дорогі ліди — креатив або аудиторія; бюджет не піднімати"
+        else:
+            act_txt = "і ліди дорожчі, і записів з них менше — не масштабувати"
+        # активні ад-сети менеджера (CRM, ліди старші за 2 дні); ⚠ — ті, що тягнуть ціну вгору
+        bad = []
+        crm_n = nm.get("crm"); flagged = False
+        for aid, a in sorted(mature.items(), key=lambda kv: -kv[1]["s"]):
+            if a["m"] != m or (m, a["adset"]) not in act or a["s"] < 10:
+                continue
+            worse = bool(crm_n) and ((a["b"] == 0 and a["s"] >= crm_n) or
+                                     (a["b"] and a["s"] / a["b"] >= 1.5 * crm_n))
+            if worse and a["b"] == 0:
+                in_mgr.add(aid)
+            flagged = flagged or worse
+            bad.append("%s%s — $%.0f, %d лідів, %s" % (
+                "⚠ " if worse else "", a["adset"], a["s"], a["l"],
+                ("%d зап. ($%.0f за запис)" % (a["b"], a["s"] / a["b"])) if a["b"] else "0 записів"))
+        bad = bad[:4]
+        if bad:
+            bad.insert(0, "ад-сети за CRM, ліди %s–%s (норма %s за CRM $%.0f):"
+                       % (dd(mat_lo), dd(mat_hi), c, crm_n or 0))
+        if flagged:
+            act_txt += "; почни з ад-сетів, позначених ⚠"
+        # чи позначає менеджер записи в CRM (якщо ні — ціни по ад-сетах завищені)
+        bd = M[m].get("bookingsDay") or []
+        crm_b = sum((bd[i] or 0) for i, d in enumerate(M[m].get("dates") or []) if shift(e, -29) <= d <= e and i < len(bd))
+        fct_b = fact(m, shift(e, -29), e)
+        note = ("у CRM позначено лише %d%% записів адміна — ціна запису по ад-сетах завищена"
+                % round(100 * crm_b / fct_b)) if fct_b >= 5 and crm_b < 0.7 * fct_b else ""
+        head = ("запис $%.2f" % cpa) if b else "0 записів"
+        text = ("%s — %s за %s–%s (%d зап., факт адміна, витрати $%.0f); норма %s $%.2f (30 дн.)"
+                % (m, head, dd(lo), dd(e), b, s, c, nm["cpa"]))
+        html = ("<b>%s</b> — <b>%s</b> за %s–%s (%d зап., факт адміна, витрати $%.0f); норма %s $%.2f (30 дн.)"
+                % (m, head, dd(lo), dd(e), b, s, c, nm["cpa"]))
+        alerts.append({"kind": "mgr_cpa", "m": m, "text": text, "html": html,
+                       "why": "; ".join(why), "act": act_txt, "adsets": bad, "note": note})
+
+    for aid, a in sorted(mature.items(), key=lambda kv: -kv[1]["s"]):
+        m = a["m"]; nm = norm.get((M.get(m) or {}).get("city")) or {}
+        if aid in in_mgr or m not in live or m in direct or (m, a["adset"]) not in act or not nm.get("crm"):
+            continue
+        if a["b"] == 0 and a["l"] > 0 and a["s"] >= ALERT_BOOK0_X * nm["crm"]:
+            exp = a["s"] / nm["crm"]
+            t = ("%s · %s — $%.0f, %d лідів за %s–%s і 0 записів у CRM; за ціною запису %s ($%.0f) мало б бути ~%.0f"
+                 % (m, a["adset"], a["s"], a["l"], dd(mat_lo), dd(mat_hi), M[m].get("city"), nm["crm"], exp))
+            alerts.append({"kind": "adset_book0", "m": m, "text": t, "html": t.replace(m + " · ", "<b>%s</b> · " % m, 1),
+                           "act": "вимкнути або замінити креатив / аудиторію", "adsets": [], "why": "", "note": ""})
+
+    dead = set()
+    for aid, a in last7.items():
+        m = a["m"]
+        if m not in live or m in direct or (m, a["adset"]) not in act:
+            continue
+        cn = cpl_norm(m)
+        if cn and a["l"] == 0 and a["s"] >= ALERT_LEAD0_X * cn:
+            dead.add((m, a["adset"]))
+            t = ("%s · %s — $%.2f за %s–%s і 0 лідів; за ціною ліда $%.2f мало б бути ~%.0f"
+                 % (m, a["adset"], a["s"], dd(D(-6)), dd(D(0)), cn, a["s"] / cn))
+            alerts.append({"kind": "lead0", "m": m, "text": t, "html": t.replace(m + " · ", "<b>%s</b> · " % m, 1),
+                           "act": "вимкнути або замінити креатив", "adsets": [], "why": "", "note": ""})
+    for cr in (out.get("creatives", {}).get("d7") or []):
+        m = cr.get("m")
+        if not cr.get("act") or m not in live or m in direct or (m, cr.get("adset")) in dead:
+            continue
+        cn = cpl_norm(m)
+        if cn and (cr.get("leads") or 0) == 0 and (cr.get("spend") or 0) >= ALERT_LEAD0_X * cn:
+            t = ("%s · креатив «%s» (%s) — $%.2f за 7 дн. і 0 лідів; за ціною ліда $%.2f мало б бути ~%.0f"
+                 % (m, cr["name"], cr.get("adset"), cr["spend"], cn, cr["spend"] / cn))
+            alerts.append({"kind": "lead0", "m": m, "text": t, "html": t.replace(m + " · ", "<b>%s</b> · " % m, 1),
+                           "act": "вимкнути креатив", "adsets": [], "why": "", "note": ""})
+    return alerts
+
 # ---------------- MAIN ----------------
 def main():
     rows = fetch_meta()
@@ -2095,6 +2264,14 @@ def main():
                 for c in sorted({r["verdict"]["code"] for r in lc}))))
     except Exception as e:
         print("lifecycle failed -> carrying over:", str(e)[:150])
+
+    try:
+        out["alerts"] = build_alerts(out)
+        print("alerts: %d" % len(out["alerts"]))
+        for _a in out["alerts"]:
+            print("  !", _a["text"])
+    except Exception as e:
+        print("alerts failed -> carrying over:", str(e)[:150])
 
     # recompute cpa/conv from (possibly updated) bookings + fresh spend/leads
     for m, node in out["managers"].items():

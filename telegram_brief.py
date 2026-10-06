@@ -93,64 +93,24 @@ def build(d):
     for m, sp, ld, bk in rows:
         L.append("%s: $%.0f · %d л · %d з" % (m, sp, ld, bk))
 
-    def days_live(m):
-        s = M.get(m, {}).get("start")
-        return ((today - datetime.date.fromisoformat(s)).days + 1) if s else 99
-
-    def chk(m):
-        return (M.get(m, {}).get("check") or {}).get("usd")
-
-    al, dead = [], set()
-    for a in (d.get("adsets", {}).get("yest") or []):
-        if str(a["m"]).startswith("Инста") or a.get("act") is False:
+    # 🔴 Алерти рахує пайплайн (build_alerts у refresh_dashboard.py) — той самий список, що
+    # угорі дашборда. Правило Ірини (06.10): тільки те, що зараз втрачає гроші, з цифрами,
+    # нормою міста, причиною й дією; якщо такого немає — блоку немає.
+    al = []
+    for a in (d.get("alerts") or []):
+        if _hid(a.get("m")):
             continue
-        if (a.get("spend") or 0) >= 5 and (a.get("leads") or 0) == 0:
-            dead.add(a["adset"])
-            al.append("• %s (%s): $%.2f без лідів — глянь або вимкни" % (a["adset"], a["m"], a["spend"]))
-    # CPA по АД-СЕТАХ за 7 днів (прив'язку записів до ад-сета полагоджено — див. refresh_dashboard).
-    # Запобіжник: якщо на ад-сети менеджера сіло <60% його записів за 7 днів
-    # (сира вкладка відстає) — адсет-CPA завищена, такі алерти не шлемо.
-    as_bk7 = {}
-    for a in (d.get("adsets", {}).get("d7") or []):
-        if not str(a["m"]).startswith("Инста"):
-            as_bk7[a["m"]] = as_bk7.get(a["m"], 0) + (a.get("book") or 0)
-    def _unrel(mm):
-        c = M.get(mm, {}).get("bookings7d") or 0
-        return c >= 5 and as_bk7.get(mm, 0) < c * 0.6
-    for a in (d.get("adsets", {}).get("d7") or []):
-        m = a["m"]
-        if str(m).startswith("Инста") or a.get("act") is False or a["adset"] in dead or _unrel(m):
-            continue
-        dl = days_live(m)
-        if dl < 4:
-            continue
-        per = ("%d дн." % dl) if dl < 7 else "7 днів"
-        ck, cp = chk(m), a.get("cpa")
-        if (a.get("spend") or 0) >= 25 and (a.get("book") or 0) == 0:
-            al.append("• %s (%s): $%.0f за %s і 0 записів" % (a["adset"], m, a["spend"], per))
-        elif ck and cp is not None and cp >= ck * 0.25:
-            al.append("• %s (%s): запис $%.2f (%s) — дуже дорого" % (a["adset"], m, cp, per))
-        elif ck and cp is not None and cp >= ck * 0.15:
-            al.append("• %s (%s): запис $%.2f (%s) — дорожче 15%% чека" % (a["adset"], m, cp, per))
-    for c in (d.get("creatives", {}).get("yest") or []):
-        if c.get("act") is False or c.get("adset") in dead:
-            continue
-        if c.get("freq") is not None and c["freq"] >= 2.5:
-            al.append("• Креатив %s (%s): частота %.2f — вигорів" % (c["name"], c["m"], c["freq"]))
-    # алерти ДИНАМІКИ з життєвого циклу (рахує пайплайн, та сама логіка, що на сайті):
-    # CPL зламався після зміни бюджету / нова РК горить без лідів
+        al.append("🔴 " + a["text"])
+        if a.get("why"):
+            al.append("   причина: " + a["why"])
+        for x in (a.get("adsets") or []):
+            al.append("   • " + x)
+        if a.get("note"):
+            al.append("   ⚠ " + a["note"])
+        al.append("   → " + a["act"])
     LC = [r for r in (d.get("lifecycle") or []) if not _hid(r.get("m"))]
-    for r in LC:
-        v = r.get("verdict") or {}
-        if v.get("code") == "degrade":
-            al.append("• %s (%s): %s" % (r["adset"], r["m"], v.get("text")))
-        elif v.get("code") == "new_dead" and r["adset"] not in dead:
-            al.append("• %s (%s): %s" % (r["adset"], r["m"], v.get("text")))
-    L.append("")
     if al:
-        L.append("🔴 Потребує уваги:"); L += al
-    else:
-        L.append("✅ Все спокійно: гроші без лідів не горять, записи не задорогі.")
+        L.append(""); L.append("Потребує уваги:"); L += al
 
     _dd = lambda s: "%s.%s" % (s[8:10], s[5:7]) if s and len(str(s)) >= 10 else "?"
 
@@ -161,9 +121,8 @@ def build(d):
         if not code.startswith("new"):
             continue
         cpl = r.get("cpl3")
-        icon = {"new_ok": "✅", "new_costly": "⚠️", "new_dead": "🔴"}.get(code, "⏳")
-        news.append("%s %s (%s): $%.0f/д · %d дн. · CPL %s" % (
-            icon, r["adset"], r["m"], r.get("budget") or 0, r.get("age") or 0,
+        news.append("• %s (%s): $%.0f/д · %d дн. · CPL %s" % (
+            r["adset"], r["m"], r.get("budget") or 0, r.get("age") or 0,
             ("$%.2f" % cpl) if cpl is not None else "—"))
     if news:
         L.append(""); L.append("🆕 Нові РК:"); L += news
@@ -180,52 +139,17 @@ def build(d):
         except Exception:
             continue
         b_, a_ = r.get("cplBefore"), r.get("cplAfter")
-        code = (r.get("verdict") or {}).get("code")
-        icon = "🔴" if code == "degrade" else ("✅" if (b_ and a_ and a_ <= b_ * 1.15) else "⏳")
         amt = " $%.0f→$%.0f" % (ch["from"], ch["to"]) if ch.get("from") and ch.get("to") else ""
-        chgd.append("%s %s (%s):%s %s · CPL %s → %s" % (
-            icon, r["adset"], r["m"], amt, _dd(ch["date"]),
+        chgd.append("• %s (%s):%s %s · CPL %s → %s" % (
+            r["adset"], r["m"], amt, _dd(ch["date"]),
             ("$%.2f" % b_) if b_ is not None else "—",
             ("$%.2f" % a_) if a_ is not None else "—"))
     if chgd:
         L.append(""); L.append("📈 Після зміни бюджету (7 дн.):"); L += chgd
 
-    # 🚀 можна масштабувати: вердикти пайплайну (та сама логіка, що на сайті);
-    # без lifecycle (старий data.json) — стара локальна формула
-    if LC:
-        sc = ["• %s (%s): %s" % (r["adset"], r["m"], (r.get("verdict") or {}).get("text"))
-              for r in LC if (r.get("verdict") or {}).get("code") in ("scale_ok", "holds")]
-    else:
-        d7map = {(a["m"], a["adset"]): a for a in (d.get("adsets", {}).get("d7") or [])}
-        sc = []
-        for s in (d.get("scaling") or []):
-            if str(s["m"]).startswith("Инста"):
-                continue
-            since = (s.get("chg") or {}).get("date") or s.get("created")
-            if not since or (today - datetime.date.fromisoformat(since)).days < 2:
-                continue
-            a = d7map.get((s["m"], s["adset"]))
-            if not a or (a.get("book") or 0) < 2:
-                continue
-            if a.get("freq") is not None and a["freq"] >= 2.2:
-                continue
-            ck, cp = chk(s["m"]), a.get("cpa")
-            if ck and cp is not None and cp >= ck * 0.15:
-                continue
-            b = s.get("budget") or 0
-            sc.append("• %s (%s): $%.0f → $%.2f" % (s["adset"], s["m"], b, b * 1.25))
-    if sc:
-        L.append(""); L.append("🚀 Можна масштабувати сьогодні:"); L += sc
-
     # 📋 вечірній зріз ПО КОЖНОМУ активному ад-сету (прохання Ірини, 26.08):
-    # бюджет, скільки днів живе, CPL за 3/7 днів (видно тренд), записи і CPA за
-    # 7 днів, коротка дія з вердикту пайплайна
-    LBL = {"degrade": "🔻 відкоти", "new_dead": "⛔ вимкни", "no_book": "⛔ не масштабуй",
-           "cpa_high": "💰 здешеви запис", "cpa_warn": "💰 дорогий запис",
-           "cpl_grow": "🎨 онови креатив", "freq": "🎨 свіжий креатив",
-           "wait": "⏳ чекай", "new_test": "🆕 тест", "new_ok": "🆕 працює",
-           "new_costly": "🆕 дорого", "holds": "🚀 можна +25%",
-           "scale_ok": "🚀 можна +25%", "inst": "🚀 обережно +20%", "few_data": "⏳ мало даних"}
+    # бюджет, скільки днів живе, CPL за 3/7 днів (видно тренд), записи і CPA за 7 днів.
+    # Дії-вердикти за CPL прибрано (06.10): рекомендації — лише в алертах вище.
     per = []
     cur_m = None
     _f = lambda v: ("%.2f" % v) if v is not None else "—"
@@ -235,15 +159,14 @@ def build(d):
         if r["m"] != cur_m:
             cur_m = r["m"]
             per.append(""); per.append("%s:" % cur_m)
-        per.append("• %s — $%.0f/д · %s дн · CPL %s/%s · зап %s · CPA %s · %s" % (
+        per.append("• %s — $%.0f/д · %s дн · CPL %s/%s · зап %s · CPA %s" % (
             r["adset"], r.get("budget") or 0, r.get("age") or "?",
             _f(r.get("cpl3")), _f(r.get("cpl7")),
             r["book7"] if r.get("book7") is not None else "—",
-            ("$%.0f" % r["cpa7"]) if r.get("cpa7") is not None else "—",
-            LBL.get((r.get("verdict") or {}).get("code"), "")))
+            ("$%.0f" % r["cpa7"]) if r.get("cpa7") is not None else "—"))
     if per:
         L.append("")
-        L.append("📋 Всі ад-сети (бюджет/день · вік · CPL 3д/7д · записи · CPA 7д · дія):")
+        L.append("📋 Всі ад-сети (бюджет/день · вік · CPL 3д/7д · записи · CPA 7д):")
         L += per
 
     L.append(""); L.append("📊 Дашборд: https://irynasyvashchenko.github.io/smas-dashboard/")
