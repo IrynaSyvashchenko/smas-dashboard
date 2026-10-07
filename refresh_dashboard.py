@@ -493,27 +493,39 @@ def rate_metrics(imp, clicks, spend, reach):
     }
 
 # ---------------- META ----------------
+# Кирилиця, що виглядає як латиниця. 06.10: РК «2.10_Instagram_повідомлення_Tanyа» мала
+# кириличну «а» в кінці — ключ «Tanya» не збігся, і кампанія ($71 за тиждень) зникла з
+# дашборда зовсім. Тепер назву й ключі порівнюємо ще й після заміни таких літер.
+_HG = str.maketrans("аеорсухі", "aeopcyxi")
+
+def _hg(s):
+    return str(s or "").lower().translate(_HG)
+
+def _kw_in(kws, c):
+    cl, ch = c.lower(), _hg(c)
+    return any(k.lower() in cl or _hg(k) in ch for k in kws)
+
 def classify(campaign):
     c = campaign or ""
     # кампанії НОВОГО кабінету (НВ): «Минск» -> окремий менеджер, решта -> «<менеджер> НВ»
     if c in NB_CAMPS:
-        cl0 = c.lower()
-        if "minsk" in cl0 or "минск" in cl0 or "мінськ" in cl0:
+        cl0 = _hg(c)
+        if "minsk" in cl0 or "минск" in c.lower() or "мінськ" in c.lower():
             return ("lead", "Минск")
         for m, kw in LEAD_KW.items():
-            kws = kw if isinstance(kw, tuple) else (kw,)
-            if any(k.lower() in cl0 for k in kws):
+            if _kw_in(kw if isinstance(kw, tuple) else (kw,), c):
                 return ("lead", m + NB_SUFFIX)
         return (None, None)
-    is_inst = ("_inst" in c) or ("instagram" in c) or ("Saidu" in c)
+    # Instagram-РК — без урахування регістру: «1.10_Instagram_профіль_Paris» з великою I
+    # раніше не ловилась і її витрати ($42 за 01–05.10) не потрапляли нікуди
+    ch = _hg(c)
+    is_inst = ("_inst" in ch) or ("instagram" in ch) or ("saidu" in ch)
     if is_inst:
-        if "Prague_Diana" in c or "Prague" in c:
+        if "prague" in ch:
             return ("inst", INST_MGR_PRAGUE)
         return ("inst", INST_MGR_PARIS)
-    cl = c.lower()
     for m, kw in LEAD_KW.items():
-        kws = kw if isinstance(kw, tuple) else (kw,)
-        if any(k.lower() in cl for k in kws):
+        if _kw_in(kw if isinstance(kw, tuple) else (kw,), c):
             # РК могла перейти до іншого менеджера — періодні агрегати віддаємо новому
             return ("lead", camp_mgr(c, TODAY, m))
     return (None, None)
