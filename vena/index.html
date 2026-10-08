@@ -22,6 +22,8 @@ h2{font-size:1.1rem;margin:28px 0 12px;color:var(--acc)}
 .tab.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
 .tabs.sm{margin:0 0 10px}
 .tabs.sm .tab{padding:5px 12px;font-size:.8rem;border-radius:8px}
+/* перемикач періодів «їде» при скролі в межах свого блоку (Ірина, 08.10) */
+.stk>.tabs{position:sticky;top:0;z-index:30;background:var(--bg);padding:8px 0;margin-bottom:8px;box-shadow:0 8px 8px -8px rgba(0,0,0,.7)}
 .phint{color:var(--mut);font-size:.78rem;margin-bottom:12px}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px}
@@ -74,19 +76,24 @@ tr:hover td{background:var(--card2)}
 <div id="alerts"></div>
 
 <h2>По напрямках</h2>
+<section class="stk">
 <div class="tabs" id="tabs"></div>
 <div class="phint" id="phint"></div>
 <div class="cards" id="cards"></div>
+</section>
 
 <h2 id="asTitle">Ад-сети (аудиторія · гео)</h2>
 <div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно. Рядки згруповані по місту й менеджеру.</div>
+<section class="stk">
 <div class="tabs sm" id="asTabs"></div>
 <div style="overflow-x:auto"><table id="asTable">
 <thead><tr><th>Ад-сет · кампанія</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Нецільові</th><th>Без реакції</th><th>Записи</th><th>CPA</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="asNote"></div>
+</section>
 
 <h2 id="crTitle">Креативи</h2>
+<section class="stk">
 <div class="tabs sm" id="crTabs"></div>
 <div style="overflow-x:auto"><table id="crTable">
 <thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th><th>% бюдж.·7д</th><th>Вердикт</th></tr></thead>
@@ -94,6 +101,7 @@ tr:hover td{background:var(--card2)}
 <div class="phint" id="crNote"></div>
 
 <div class="chartbox"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
+</section>
 
 <h2>Динаміка (з 15.08)</h2>
 <div class="chartbox"><h3>Ціна ліда (CPL) по днях, $</h3><canvas id="cplChart"></canvas></div>
@@ -134,6 +142,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const today=allDates[allDates.length-1];
   const yest=addD(today,-1);
   const d7from=addD(today,-6);
+  const d3from=addD(today,-2);
   const monthPref=today.slice(0,7);
   const monthName=MONTHS[parseInt(today.slice(5,7),10)-1];
   // попередній календарний місяць (вкладка лишається після зміни місяця: Липень+Серпень і т.д.)
@@ -187,6 +196,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
           hint:`Повний закритий день — ${dd(yest)}. Найчесніші цифри для рішень.`,
           pred:d=>d===yest, bk:m=>m.bookingsYest??0,
           extra:m=>`<div class="row"><span class="l">Дата</span><b>${dd(yest)}</b></div>`},
+    d3:{label:'3 дні',qk:'d3',range:`${dd(d3from)} – ${dd(today)}`,
+          hint:`Останні 3 дні (${dd(d3from)} – ${dd(today)}, разом з неповним сьогодні) — швидкий пульс нових і щойно змінених РК.`,
+          pred:d=>d>=d3from,
+          bk:m=>m.bookings3d??((m.bookingsDay||[]).reduce((s,v,i)=>s+((m.dates[i]||'')>=d3from?(v||0):0),0)),
+          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d3from).length}</b></div>`},
     d7:{label:'7 днів',qk:'d7',range:`${dd(d7from)} – ${dd(today)}`,
           hint:`${dd(d7from)} – ${dd(today)} (включно з неповним сьогодні).`,
           pred:d=>d>=d7from, bk:m=>m.bookings7d??0,
@@ -211,7 +225,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // Старий data.json (до першого автооновлення) містить простий масив за 7 днів —
   // тоді показуємо його в усіх періодах з попередженням.
   const oldFmt=Array.isArray(D.adsets)||Array.isArray(D.creatives);
-  const normP=x=>Array.isArray(x)?{yest:x,d7:x,month:x,all:x}:(x||{});
+  const normP=x=>Array.isArray(x)?{yest:x,d3:x,d7:x,month:x,all:x}:(x||{});
   const AS=normP(D.adsets), CR=normP(D.creatives);
   const OLDFMT_NOTE='⚠️ Дані таблиці поки за останні 7 днів (старий формат) — перемикання періодів запрацює після наступного автооновлення. ';
 
