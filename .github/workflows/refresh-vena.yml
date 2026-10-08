@@ -5,6 +5,10 @@ name: Refresh vena dashboard (ad5)
 #     вранці регулярно дірка 6+ год (04:30 -> 10:30 UTC);
 #  2) ланцюжок від головного дашборда — його розклад надійніший, тож vena
 #     оновлюється одразу після кожного "Refresh dashboard data".
+#  Зворотний зв'язок (08.10): GitHub губить ранкові слоти головного refresh (дані стоять
+#  з ~02:00 до ~14:00 Праги). Плановий запуск vena вдень перевіряє вік головного data.json
+#  і, якщо він старший 100 хв, сам запускає "Refresh dashboard data" (workflow_dispatch).
+#  Лише з schedule і лише 03..16 UTC: без циклів і без впливу на вечірні брифи.
 on:
   schedule:
     - cron: "15 */2 * * *"     # зсув на :15, щоб не штовхатися з головним refresh
@@ -15,6 +19,7 @@ on:
 
 permissions:
   contents: write
+  actions: write               # щоб підштовхнути головний refresh, коли його розклад пропав
 
 concurrency:
   group: vena-refresh
@@ -49,4 +54,19 @@ jobs:
             git push
           else
             echo "vena/data.json unchanged"
+          fi
+
+      - name: Kick main refresh if its schedule was skipped
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          H=$((10#$(date -u +%H)))
+          AGE=$(python -c "import json,datetime as d;u=d.datetime.fromisoformat(json.load(open('data.json',encoding='utf-8'))['updated']);print(int((d.datetime.now(d.timezone.utc)-u).total_seconds()//60))")
+          LAST=$(gh run list --workflow refresh.yml --limit 1 --json status --jq '.[0].status' || echo unknown)
+          echo "UTC hour $H, main data.json age ${AGE} min, last main run: $LAST"
+          if [ "$H" -ge 3 ] && [ "$H" -le 16 ] && [ "$AGE" -ge 100 ] && [ "$LAST" != "in_progress" ] && [ "$LAST" != "queued" ]; then
+            gh workflow run refresh.yml --ref main && echo "main refresh dispatched"
+          else
+            echo "main refresh not needed"
           fi
