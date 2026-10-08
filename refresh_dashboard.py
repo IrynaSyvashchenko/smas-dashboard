@@ -1638,7 +1638,10 @@ def build_lifecycle(out):
 # «нормальним»), а всі менеджери Ірини в тому ж місті за 30 днів.
 # Записи: менеджер — за фактом адміна і лише по днях, які адмін уже заповнив; ад-сет — за
 # CRM (ліди, старші за 2 дні — лаг позначок). Сайт і Telegram-бриф показують цей самий список.
-ALERT_CPA_X   = 1.3   # запис менеджера ≥ на 30% дорожчий за норму міста
+ALERT_CPA_X   = 1.3   # запис менеджера ≥ на 30% дорожчий за норму міста (міста без CPA_THR)
+# Пороги ціни запису менеджера (Ірина, 08.10.2026, приблизні): (🟡 понад, 🔴 понад), $.
+# Факт адміна, вкладка «7 днів» по заповнених днях. Минськ/Барселона окремо не задані — як Прага/Париж.
+CPA_THR = {"Прага": (12, 17), "Минск": (12, 17), "Париж": (15, 20), "Барселона": (15, 20)}
 ALERT_BOOK0_X = 3     # ад-сет без жодного запису при витратах ≥ 3 цін запису міста
 ALERT_LEAD0_X = 4     # без лідів при витратах ≥ 4 цін ліда менеджера (шанс випадковості ~2%)
 
@@ -1704,6 +1707,10 @@ def build_alerts(out):
 
     alerts, in_mgr = [], set()
     for m in live:
+        # Instagram Direct (Таня НВ, Инста): лідів як таких немає — лише кількість і записи
+        # з реєстру адміна, без CRM і ад-сетів; в алерти не йдуть (Ірина, 08.10)
+        if m in direct:
+            continue
         c = M[m].get("city"); nm = norm.get(c) or {}; e = last_fd(m)
         # вікно = вкладка «7 днів» дашборда, але тільки дні, які адмін уже заповнив
         # (сьогоднішні витрати без внесених записів завищують ціну — Ірина, 06.10)
@@ -1711,11 +1718,18 @@ def build_alerts(out):
         if not nm.get("cpa") or not e or e < lo:
             continue
         s, l = mser(m, lo, e); b = fact(m, lo, e)
-        if s < 2 * nm["cpa"]:
+        thr = CPA_THR.get(c)
+        if s < 2 * (thr[0] if thr else nm["cpa"]):
             continue                      # замало витрат, щоб судити
         cpa = s / b if b else None
-        if b and cpa < ALERT_CPA_X * nm["cpa"]:
-            continue
+        if thr:                           # абсолютні пороги міста: 🟡 / 🔴
+            if b and cpa <= thr[0]:
+                continue
+            lvl = "r" if (not b or cpa > thr[1]) else "y"
+        else:
+            if b and cpa < ALERT_CPA_X * nm["cpa"]:
+                continue
+            lvl = "r"
         cpl = s / l if l else None; conv = b / l if l else None
         # причина: ліди дорожчі за норму міста чи з лідів менше записів
         why = []
@@ -1758,11 +1772,12 @@ def build_alerts(out):
         note = ("у CRM позначено лише %d%% записів адміна — ціна запису по ад-сетах завищена"
                 % round(100 * crm_b / fct_b)) if fct_b >= 5 and crm_b < 0.7 * fct_b else ""
         head = ("запис $%.2f" % cpa) if b else "0 записів"
-        text = ("%s — %s за %s–%s (%d зап., факт адміна, витрати $%.0f); норма %s $%.2f (30 дн.)"
-                % (m, head, dd(lo), dd(e), b, s, c, nm["cpa"]))
-        html = ("<b>%s</b> — <b>%s</b> за %s–%s (%d зап., факт адміна, витрати $%.0f); норма %s $%.2f (30 дн.)"
-                % (m, head, dd(lo), dd(e), b, s, c, nm["cpa"]))
-        alerts.append({"kind": "mgr_cpa", "m": m, "text": text, "html": html,
+        thr_t = ("; поріг %s: 🟡 >$%d, 🔴 >$%d" % (c, thr[0], thr[1])) if thr else ""
+        text = ("%s — %s за %s–%s (%d зап., факт адміна, витрати $%.0f); норма %s $%.2f (30 дн.)%s"
+                % (m, head, dd(lo), dd(e), b, s, c, nm["cpa"], thr_t))
+        html = ("<b>%s</b> — <b>%s</b> за %s–%s (%d зап., факт адміна, витрати $%.0f); норма %s $%.2f (30 дн.)%s"
+                % (m, head, dd(lo), dd(e), b, s, c, nm["cpa"], thr_t))
+        alerts.append({"kind": "mgr_cpa", "lvl": lvl, "m": m, "text": text, "html": html,
                        "why": "; ".join(why), "act": act_txt, "adsets": bad, "note": note})
 
     for aid, a in sorted(mature.items(), key=lambda kv: -kv[1]["s"]):
@@ -1798,6 +1813,8 @@ def build_alerts(out):
                  % (m, cr["name"], cr.get("adset"), cr["spend"], cn, cr["spend"] / cn))
             alerts.append({"kind": "lead0", "m": m, "text": t, "html": t.replace(m + " · ", "<b>%s</b> · " % m, 1),
                            "act": "вимкнути креатив", "adsets": [], "why": "", "note": ""})
+    # червоні першими, жовті (запис між порогами міста) — після них
+    alerts.sort(key=lambda a: a.get("lvl") == "y")
     return alerts
 
 # ---------------- MAIN ----------------

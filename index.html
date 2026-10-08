@@ -22,6 +22,8 @@ h2{font-size:1.1rem;margin:28px 0 12px;color:var(--acc)}
 .tab.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
 .tabs.sm{margin:0 0 10px}
 .tabs.sm .tab{padding:5px 12px;font-size:.8rem;border-radius:8px}
+/* перемикач періодів «їде» при скролі в межах свого блоку (Ірина, 08.10) */
+.stk>.tabs{position:sticky;top:0;z-index:30;background:var(--bg);padding:8px 0;margin-bottom:8px;box-shadow:0 8px 8px -8px rgba(0,0,0,.7)}
 .phint{color:var(--mut);font-size:.78rem;margin-bottom:12px}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px}
@@ -80,25 +82,31 @@ tr:hover td{background:var(--card2)}
 <div id="alerts"></div>
 
 <h2>По менеджерах</h2>
+<section class="stk">
 <div class="tabs" id="tabs"></div>
 <div class="phint" id="phint"></div>
 <div class="cards" id="cards"></div>
+</section>
 
 <h2 id="asTitle">Ад-сети (аудиторія · гео)</h2>
 <div class="phint">Тут видно проблеми <b>таргетингу</b>: який саме ад-сет ллє гроші не в те місто або тягне людей, що не відповідають. На рівні креативу це не видно. Рядки згруповані по місту й менеджеру.</div>
+<section class="stk">
 <div class="tabs sm" id="asTabs"></div>
 <div style="overflow-x:auto"><table id="asTable">
 <thead><tr><th>Ад-сет · кампанія</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Нецільові</th><th>Без реакції</th><th>Записи</th><th>CPA</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="asNote"></div>
+</section>
 
 <h2 id="crTitle">Креативи</h2>
+<section class="stk">
 <div class="tabs sm" id="crTabs"></div>
 <div style="overflow-x:auto"><table id="crTable">
 <thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th><th>% бюдж.·7д</th><th>Вердикт</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="crNote"></div>
 <div class="chartbox" style="margin-top:14px"><h3>Ціна запису (CPA) по креативах, $</h3><canvas id="cpaChart"></canvas></div>
+</section>
 
 <div id="scSection" style="display:none">
 <h2>🚀 Масштабування</h2>
@@ -237,11 +245,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     return `<div class="row"><span class="l">Дохід (${bk} × ${c.amount} ${CURSIGN[c.cur]||c.cur})</span><b>${fmt(rev)}</b></div>
             <div class="row"><span class="l">ROAS (оцінка)</span><b>${r.toFixed(2)}</b></div>`;
   };
-  // пороги CPA по містах (правило Ірини): Прага <10 зел / до 15 жовт / далі черв;
-  // Париж і Барселона <20 / до 25 / далі червоний
-  const cpaT=city=>(city==='Прага'||city==='Минск')?[10,15]:[20,25];
+  // пороги ціни запису по містах (Ірина, 08.10.2026, приблизні; ті самі, що CPA_THR у пайплайні):
+  // Прага/Минськ до $12 зел / до $17 жовт / далі черв; Париж/Барселона до $15 / до $20 / далі червоний
+  const cpaT=city=>(city==='Прага'||city==='Минск')?[12,17]:[15,20];
   const cpaColor=(city,v)=>{if(v==null)return '';const t=cpaT(city);
-    return v<t[0]?'var(--good)':v<t[1]?'var(--warn)':'var(--bad)'};
+    return v<=t[0]?'var(--good)':v<=t[1]?'var(--warn)':'var(--bad)'};
 
   const tabsEl=document.getElementById('tabs');
   Object.keys(P).forEach(k=>{
@@ -340,7 +348,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     for(const a of (D.alerts||[])){
       if(hid(a.m)) continue;
       const ads=a.adsets||[], cap=ads.length&&/^ад-сети/.test(ads[0])?ads[0]:null, items=cap?ads.slice(1):ads;
-      A.push(['bad',`🔴 ${a.html}`+
+      const y=a.lvl==='y';   // 🟡 запис між порогами міста (Ірина, 08.10)
+      A.push([y?'warn':'bad',`${y?'🟡':'🔴'} ${a.html}`+
         (a.why?`<div style="margin-top:4px">Причина: ${esc(a.why)}</div>`:'')+
         (items.length?`<div style="margin-top:4px;color:var(--mut)">${esc(cap||'')}</div><ul style="margin:2px 0 0 18px;padding:0">${items.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'')+
         (a.note?`<div style="margin-top:4px;color:var(--mut)">⚠ ${esc(a.note)}</div>`:'')+

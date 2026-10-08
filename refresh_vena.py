@@ -537,11 +537,12 @@ def _tally_manager(rows, today, raw_idx):
     month_start = today.replace(day=1)
     pm_start = (month_start - datetime.timedelta(days=1)).replace(day=1)
     booked = b7 = b1 = leads = 0
-    bY = bM = bPM = 0
+    bY = bM = bPM = b3 = 0
     old_keys, booked_keys = [], []
-    Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in ("yest", "d7", "month", "pmonth", "all")}
-    K = {p: 0 for p in ("yest", "d7", "month", "pmonth", "all")}   # записи на консультацію
-    I = {p: 0 for p in ("yest", "d7", "month", "pmonth", "all")}   # записи на установку
+    _PK = ("yest", "d3", "d7", "month", "pmonth", "all")     # d3 — з 08.10 (прохання Ірини)
+    Q = {p: {"leads": 0, "bad": 0, "noresp": 0} for p in _PK}
+    K = {p: 0 for p in _PK}   # записи на консультацію
+    I = {p: 0 for p in _PK}   # записи на установку
     leadsQ = []
     for (ph, ct), (r, _) in seen.items():
         if not ct or ct < DATE_FROM:
@@ -557,6 +558,7 @@ def _tally_manager(rows, today, raw_idx):
         buckets = ["all"]
         if cd:
             if cd == yest: buckets.append("yest")
+            if 0 <= (today - cd).days < 3: buckets.append("d3")
             if 0 <= (today - cd).days < 7: buckets.append("d7")
             if cd >= month_start: buckets.append("month")
             if pm_start <= cd < month_start: buckets.append("pmonth")
@@ -573,6 +575,7 @@ def _tally_manager(rows, today, raw_idx):
             booked_keys.append("%s|%s" % (ph, ct))
             if cd:
                 if 0 <= (today - cd).days < 7: b7 += 1
+                if 0 <= (today - cd).days < 3: b3 += 1
                 if cd == yest: bY += 1
                 if cd >= month_start: bM += 1
                 if pm_start <= cd < month_start: bPM += 1
@@ -582,7 +585,7 @@ def _tally_manager(rows, today, raw_idx):
                     old_keys.append("%s|%s" % (ph, ct))
             else:
                 old_keys.append("%s|%s" % (ph, ct))
-    return {"bookings": booked, "bookings7d": b7, "bookings1d": b1,
+    return {"bookings": booked, "bookings7d": b7, "bookings3d": b3, "bookings1d": b1,
             "bookingsYest": bY, "bookingsMonth": bM, "bookingsPrevMonth": bPM,
             "leads_seen": leads, "old_keys": old_keys, "q": Q,
             "kons": K, "inst": I,
@@ -936,6 +939,7 @@ def main():
             node = out["managers"][m]
             node["bookings"] = v["bookings"]
             node["bookings7d"] = v["bookings7d"]
+            node["bookings3d"] = v.get("bookings3d", 0)
             node["bookings1d"] = v["bookings1d"]
             node["bookingsYest"] = v["bookingsYest"]
             node["bookingsMonth"] = v["bookingsMonth"]
@@ -1001,11 +1005,12 @@ def main():
     # ---- періодні метрики + ад-сети/креативи ----
     td = datetime.date.fromisoformat(TODAY)
     yest_s = (td - datetime.timedelta(days=1)).isoformat()
+    d3from = (td - datetime.timedelta(days=2)).isoformat()
     d7from = (td - datetime.timedelta(days=6)).isoformat()
     mstart = td.replace(day=1).isoformat()
     _pme = td.replace(day=1) - datetime.timedelta(days=1)
     _pms = _pme.replace(day=1)
-    PERIODS = {"yest": (yest_s, yest_s), "d7": (d7from, TODAY),
+    PERIODS = {"yest": (yest_s, yest_s), "d3": (d3from, TODAY), "d7": (d7from, TODAY),
                "month": (mstart, TODAY),
                "pmonth": (_pms.isoformat(), _pme.isoformat()),
                "all": (DATE_FROM, TODAY)}

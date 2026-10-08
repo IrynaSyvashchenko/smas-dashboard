@@ -100,7 +100,7 @@ def build(d):
     for a in (d.get("alerts") or []):
         if _hid(a.get("m")):
             continue
-        al.append("🔴 " + a["text"])
+        al.append(("🟡 " if a.get("lvl") == "y" else "🔴 ") + a["text"])
         if a.get("why"):
             al.append("   причина: " + a["why"])
         for x in (a.get("adsets") or []):
