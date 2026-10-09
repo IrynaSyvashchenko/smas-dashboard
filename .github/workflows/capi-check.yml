@@ -1,0 +1,30 @@
+name: CAPI coverage check
+
+# Діагностика охоплення лідів (тільки читання, нічого не шле в Meta). Запуск вручну.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Скільки останніх повних днів перевіряти"
+        required: false
+        default: "3"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compare Meta leads with CAPI events
+        env:
+          META_TOKEN: ${{ secrets.META_TOKEN }}
+          SHEETS_URL: ${{ secrets.SHEETS_URL }}
+          SHEETS_KEY: ${{ secrets.SHEETS_KEY }}
+          CHECK_DAYS: ${{ inputs.days }}
+        run: python capi_check.py
