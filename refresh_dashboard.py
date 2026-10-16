@@ -1195,7 +1195,19 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
     Саме тут видно проблеми таргетингу (гео, радіус), яких не видно на рівні креативу."""
     # liveA = ад-сети, що ЗАРАЗ реально крутяться (effective_status ACTIVE). Вимкнені
     # НЕ ховаємо — показуємо сірим (act=False), як креативи, щоб бачити виключене.
-    liveA = ({str(x.get("id")) for x in _graph_all("adsets", "id,effective_status") if x.get("effective_status") == "ACTIVE"} if META_TOKEN else None)
+    # bmap = денний бюджет ад-сета зараз ($); якщо бюджет на рівні РК (CBO) — бюджет РК, lvl="campaign"
+    liveA, bmap = None, {}
+    if META_TOKEN:
+        liveA = set()
+        for x in _graph_all("adsets", "id,effective_status,daily_budget,campaign{daily_budget}"):
+            aid = str(x.get("id"))
+            if x.get("effective_status") == "ACTIVE":
+                liveA.add(aid)
+            b, lvl = num(x.get("daily_budget")), "adset"
+            if not b:
+                b, lvl = num((x.get("campaign") or {}).get("daily_budget")), "campaign"
+            if b:
+                bmap[aid] = (round(b / 100.0, 2), lvl)
     out = {}
     for key, (dfrom, dto) in periods.items():
         try:
@@ -1243,8 +1255,10 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
             rm = rate_metrics(a["imp"], a["clicks"], a["spend"], a["reach"])
             q = qmap.get(aid) if m in raw_ok else None
             book = q["book"] if q else None
+            bud, blvl = bmap.get(aid, (None, None))
             res.append({"m": m, "campaign": a["campaign"], "adset": a["adset"],
                         "act": (aid in liveA) if liveA is not None else True,
+                        "budget": bud, "blvl": blvl,
                         "spend": sp, "leads": ld,
                         "cpl": round(sp / ld, 2) if ld else None,
                         "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"],

@@ -93,7 +93,7 @@ tr:hover td{background:var(--card2)}
 <section class="stk">
 <div class="tabs sm" id="asTabs"></div>
 <div style="overflow-x:auto"><table id="asTable">
-<thead><tr><th>Ад-сет · кампанія</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Нецільові</th><th>Без реакції</th><th>Записи</th><th>CPA</th></tr></thead>
+<thead><tr><th>Ад-сет · кампанія</th><th title="Денний бюджет зараз (з кабінету Meta). «РК» = бюджет на рівні кампанії, спільний для її ад-сетів">Бюджет/день</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Нецільові</th><th>Без реакції</th><th>Записи</th><th>CPA</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="asNote"></div>
 </section>
@@ -470,8 +470,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     let asCity='';
     for(const [mgr,rows] of groupByMgr(list)){
       const ct=M[mgr]?.city||'';
-      if(ct&&ct!==asCity){asb.insertAdjacentHTML('beforeend',cityRow(ct,10));asCity=ct;}
-      asb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,10));
+      if(ct&&ct!==asCity){asb.insertAdjacentHTML('beforeend',cityRow(ct,11));asCity=ct;}
+      asb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,11));
       for(const a of [...rows].sort((x,y)=>((x.act===false)-(y.act===false))||(y.spend||0)-(x.spend||0))){
         const ii=isInst(a.m), ia=(a.act===false);   // ia = ад-сет уже не крутиться -> сірий рядок
         const q=a.q, fcls=a.freq==null?'':(a.freq>=2.5?'r':a.freq>=1.8?'y':'g');
@@ -486,6 +486,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         const of=offerInfo(a);
         asb.insertAdjacentHTML('beforeend',`<tr class="${ia?'inact ':''}${of?'offer':''}">
           <td>${a.adset}${of?`<span class="oftag" title="Інший оффер: ${of.o} € замість ${of.b} €">${of.o} €</span>`:''}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
+          <td>${a.budget!=null?(a.blvl==='campaign'?`<span title="Бюджет кампанії (CBO), спільний для її ад-сетів">${fmt(a.budget)} <span style="color:var(--mut);font-size:.72rem">РК</span></span>`:fmt(a.budget)):'—'}</td>
           <td>${fmt(a.spend)}</td><td>${ii?'—':a.leads}</td><td>${ii?'—':fmt(a.cpl)}</td>
           <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
           <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
