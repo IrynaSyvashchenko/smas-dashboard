@@ -141,10 +141,12 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const allDates=[...new Set(Object.values(M).flatMap(m=>m.dates))].sort();
   const today=allDates[allDates.length-1];
   const yest=addD(today,-1);
-  const d7from=addD(today,-6);
-  const d3from=addD(today,-2);
-  const monthPref=today.slice(0,7);
-  const monthName=MONTHS[parseInt(today.slice(5,7),10)-1];
+  // 3 / 7 днів і місяць — ЛИШЕ ЗАКРИТІ ДНІ, до вчора включно (Ірина, 18.10)
+  const d7from=addD(yest,-6);
+  const d3from=addD(yest,-2);
+  const closed=d=>d<=yest;
+  const monthPref=yest.slice(0,7);
+  const monthName=MONTHS[parseInt(yest.slice(5,7),10)-1];
   // попередній календарний місяць (вкладка лишається після зміни місяця: Липень+Серпень і т.д.)
   const pmEnd=new Date(monthPref+'-01T00:00:00Z'); pmEnd.setUTCDate(0);
   const pmPref=pmEnd.toISOString().slice(0,7), pmLast=pmEnd.toISOString().slice(0,10);
@@ -196,24 +198,24 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
           hint:`Повний закритий день — ${dd(yest)}. Найчесніші цифри для рішень.`,
           pred:d=>d===yest, bk:m=>m.bookingsYest??0,
           extra:m=>`<div class="row"><span class="l">Дата</span><b>${dd(yest)}</b></div>`},
-    d3:{label:'3 дні',qk:'d3',range:`${dd(d3from)} – ${dd(today)}`,
-          hint:`Останні 3 дні (${dd(d3from)} – ${dd(today)}, разом з неповним сьогодні) — швидкий пульс нових і щойно змінених РК.`,
-          pred:d=>d>=d3from,
+    d3:{label:'3 дні',qk:'d3',range:`${dd(d3from)} – ${dd(yest)}`,
+          hint:`Останні 3 закриті дні (${dd(d3from)} – ${dd(yest)}, без неповного сьогодні) — швидкий пульс нових і щойно змінених РК.`,
+          pred:d=>d>=d3from&&closed(d),
           bk:m=>m.bookings3d??((m.bookingsDay||[]).reduce((s,v,i)=>s+((m.dates[i]||'')>=d3from?(v||0):0),0)),
-          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d3from).length}</b></div>`},
-    d7:{label:'7 днів',qk:'d7',range:`${dd(d7from)} – ${dd(today)}`,
-          hint:`${dd(d7from)} – ${dd(today)} (включно з неповним сьогодні).`,
-          pred:d=>d>=d7from, bk:m=>m.bookings7d??0,
-          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d7from).length}</b></div>`},
+          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d3from&&closed(d)).length}</b></div>`},
+    d7:{label:'7 днів',qk:'d7',range:`${dd(d7from)} – ${dd(yest)}`,
+          hint:`${dd(d7from)} – ${dd(yest)}: 7 закритих днів, без неповного сьогодні.`,
+          pred:d=>d>=d7from&&closed(d), bk:m=>m.bookings7d??0,
+          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d7from&&closed(d)).length}</b></div>`},
     pmonth:{label:pmName,qk:'pmonth',range:`${dd(pmPref+'-01')} – ${dd(pmLast)}`,
           hint:`Попередній календарний місяць (${pmName}) — закритий, цифри вже не зміняться.`,
           pred:d=>d.startsWith(pmPref),
           bk:m=>m.bookingsPrevMonth??((m.bookingsDay||[]).reduce((s,v,i)=>s+((m.dates[i]||'').startsWith(pmPref)?(v||0):0),0)),
           extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(pmPref)).length}</b></div>`},
-    month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(today)}`,
-          hint:`Поточний календарний місяць — те, що йде у звіт для керівництва.`,
-          pred:d=>d.startsWith(monthPref), bk:m=>m.bookingsMonth??0,
-          extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(monthPref)).length}</b></div>`},
+    month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(yest)}`,
+          hint:`Поточний календарний місяць по закритих днях (до ${dd(yest)} включно) — те, що йде у звіт для керівництва.`,
+          pred:d=>d.startsWith(monthPref)&&closed(d), bk:m=>m.bookingsMonth??0,
+          extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(monthPref)&&closed(d)).length}</b></div>`},
     all:{label:'Весь час',qk:'all',range:`${dd(allDates[0])} – ${dd(today)}`,
           hint:`Від старту кожного менеджера. Періоди різні — порівнювати менеджерів між собою тут не можна.`,
           pred:d=>true, bk:m=>m.bookings??0,
