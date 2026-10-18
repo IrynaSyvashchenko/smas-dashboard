@@ -154,9 +154,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   const allDates=[...new Set(Object.values(M).flatMap(m=>m.dates))].sort();
   const today=allDates[allDates.length-1];
   const yest=addD(today,-1);
-  const d7from=addD(today,-6);
-  const monthPref=today.slice(0,7);
-  const monthName=MONTHS[parseInt(today.slice(5,7),10)-1];
+  // 3 / 7 днів і місяць — ЛИШЕ ЗАКРИТІ ДНІ, до вчора включно (Ірина, 18.10);
+  // місяць = місяць учорашнього дня (1-го числа — це вже минулий місяць)
+  const d7from=addD(yest,-6);
+  const monthPref=yest.slice(0,7);
+  const monthName=MONTHS[parseInt(yest.slice(5,7),10)-1];
   // попередній календарний місяць (вкладка лишається після зміни місяця: Липень+Серпень і т.д.)
   const pmEnd=new Date(monthPref+'-01T00:00:00Z'); pmEnd.setUTCDate(0);
   const pmPref=pmEnd.toISOString().slice(0,7), pmLast=pmEnd.toISOString().slice(0,10);
@@ -196,25 +198,26 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // ---- періоди ----
   // Порядок вкладок = порядок ключів: свіже зліва (Вчора · 3 дні · 7 днів · поточний
   // місяць), закриті місяці й «Весь час» — у кінці (прохання Ірини, 26.08).
-  const d3from=addD(today,-2);
+  const d3from=addD(yest,-2);
+  const closed=d=>d<=yest;
   const P={
     yest:{label:'Вчора',qk:'yest',range:dd(yest),
           hint:`Повний закритий день — ${dd(yest)}. Найчесніші цифри для рішень.`,
           pred:d=>d===yest, bk:m=>m.bookingsYest??0,
           extra:m=>`<div class="row"><span class="l">Дата</span><b>${dd(yest)}</b></div>`},
-    d3:{label:'3 дні',qk:'d3',range:`${dd(d3from)} – ${dd(today)}`,
-          hint:`Останні 3 дні (${dd(d3from)} – ${dd(today)}, разом з неповним сьогодні) — швидкий пульс нових і щойно масштабованих РК.`,
-          pred:d=>d>=d3from,
+    d3:{label:'3 дні',qk:'d3',range:`${dd(d3from)} – ${dd(yest)}`,
+          hint:`Останні 3 закриті дні (${dd(d3from)} – ${dd(yest)}, без неповного сьогодні) — швидкий пульс нових і щойно масштабованих РК.`,
+          pred:d=>d>=d3from&&closed(d),
           bk:m=>m.bookings3d??((m.bookingsDay||[]).reduce((s,v,i)=>s+((m.dates[i]||'')>=d3from?(v||0):0),0)),
-          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d3from).length}</b></div>`},
-    d7:{label:'7 днів',qk:'d7',range:`${dd(d7from)} – ${dd(today)}`,
-          hint:`${dd(d7from)} – ${dd(today)} (включно з неповним сьогодні).`,
-          pred:d=>d>=d7from, bk:m=>m.bookings7d??0,
-          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d7from).length}</b></div>`},
-    month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(today)}`,
-          hint:`Поточний календарний місяць — те, що йде у звіт для керівництва.`,
-          pred:d=>d.startsWith(monthPref), bk:m=>m.bookingsMonth??0,
-          extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(monthPref)).length}</b></div>`},
+          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d3from&&closed(d)).length}</b></div>`},
+    d7:{label:'7 днів',qk:'d7',range:`${dd(d7from)} – ${dd(yest)}`,
+          hint:`${dd(d7from)} – ${dd(yest)}: 7 закритих днів, без неповного сьогодні.`,
+          pred:d=>d>=d7from&&closed(d), bk:m=>m.bookings7d??0,
+          extra:m=>`<div class="row"><span class="l">Днів у періоді</span><b>${m.dates.filter(d=>d>=d7from&&closed(d)).length}</b></div>`},
+    month:{label:monthName,qk:'month',range:`${dd(monthPref+'-01')} – ${dd(yest)}`,
+          hint:`Поточний календарний місяць по закритих днях (до ${dd(yest)} включно) — те, що йде у звіт для керівництва.`,
+          pred:d=>d.startsWith(monthPref)&&closed(d), bk:m=>m.bookingsMonth??0,
+          extra:m=>`<div class="row"><span class="l">Днів у місяці</span><b>${m.dates.filter(d=>d.startsWith(monthPref)&&closed(d)).length}</b></div>`},
     pmonth:{label:pmName,qk:'pmonth',range:`${dd(pmPref+'-01')} – ${dd(pmLast)}`,
           hint:`Попередній календарний місяць (${pmName}) — закритий, цифри вже не зміняться.`,
           pred:d=>d.startsWith(pmPref),
@@ -463,6 +466,26 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     return (o&&b&&o!==b)?{o,b}:null;
   }
 
+  // Бюджет ад-сета + остання зміна + чи можна масштабувати (D.scaleAdv — правила scale.py,
+  // рахує пайплайн: факт менеджера ≤ порогу міста, ад-сет ≤0.9× менеджера за 14 зрілих днів і ≥5 записів,
+  // ≥3 дні після зміни, після підняття «втрималось», частота <1.8; крок +20/30%)
+  const SA=D.scaleAdv||{};
+  function budCell(a){
+    if(a.budget==null) return '—';
+    let h=a.blvl==='campaign'?`<span title="Бюджет кампанії (CBO), спільний для її ад-сетів">${fmt(a.budget)} <span style="color:var(--mut);font-size:.72rem">РК</span></span>`:fmt(a.budget);
+    const s=SA[a.id];
+    if(!s||a.act===false) return h;
+    const c=s.chg;
+    if(c&&c.date) h+=`<br><span style="color:var(--mut);font-size:.72rem">`+
+      (c.from&&c.to?`${c.to>c.from?'↑':'↓'} ${dd(c.date)}: $${c.from}→$${c.to}`:`змінено ${dd(c.date)}`)+`</span>`;
+    const tip=String(s.why||'').replace(/"/g,'&quot;');
+    const tag=s.v==='up'?`<span class="tag g" title="${tip}">можна +${s.pct}% → $${s.to}</span>`:
+              s.v==='wait'?`<span class="tag y" title="${tip}">чекати до ${dd(s.until)}</span>`:
+              s.v==='new'?`<span class="tag y" title="${tip}">тест</span>`:
+              `<span class="tag" style="color:var(--mut)" title="${tip}">не масшт.: ${s.short||''}</span>`;
+    return h+`<br>${tag}`;
+  }
+
   function renderAdsets(k){
     const p=P[k], list=AS[k]||[];
     document.getElementById('asTitle').textContent=`Ад-сети (аудиторія · гео) — ${p.label} · ${p.range}`;
@@ -486,7 +509,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         const of=offerInfo(a);
         asb.insertAdjacentHTML('beforeend',`<tr class="${ia?'inact ':''}${of?'offer':''}">
           <td>${a.adset}${of?`<span class="oftag" title="Інший оффер: ${of.o} € замість ${of.b} €">${of.o} €</span>`:''}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
-          <td>${a.budget!=null?(a.blvl==='campaign'?`<span title="Бюджет кампанії (CBO), спільний для її ад-сетів">${fmt(a.budget)} <span style="color:var(--mut);font-size:.72rem">РК</span></span>`:fmt(a.budget)):'—'}</td>
+          <td>${budCell(a)}</td>
           <td>${fmt(a.spend)}</td><td>${ii?'—':a.leads}</td><td>${ii?'—':fmt(a.cpl)}</td>
           <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
           <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>

@@ -825,7 +825,9 @@ def _tally_manager(rows, today, phone_of, row_ok):
     for r in rows:
         seen[(str(phone_of(r)), str(r.get("created_time")))] = r
     yest = today - datetime.timedelta(days=1)
-    month_start = today.replace(day=1)
+    # Періоди — ЛИШЕ ЗАКРИТІ ДНІ (Ірина, 18.10): 3/7 днів = три/сім днів до вчора включно,
+    # «місяць» = місяць учорашнього дня до вчора (1-го числа це вже минулий місяць).
+    month_start = (today - datetime.timedelta(days=1)).replace(day=1)
     pm_start = (month_start - datetime.timedelta(days=1)).replace(day=1)   # попередній місяць
     booked = b7 = b3 = b1 = leads = 0
     bY = bM = bPM = 0                   # bookings among leads created yesterday / this / prev month
@@ -898,9 +900,9 @@ def _tally_manager(rows, today, phone_of, row_ok):
         buckets = ["all"]
         if cd:
             if cd == yest: buckets.append("yest")
-            if 0 <= (today - cd).days < 3: buckets.append("d3")
-            if 0 <= (today - cd).days < 7: buckets.append("d7")
-            if cd >= month_start: buckets.append("month")
+            if 1 <= (today - cd).days <= 3: buckets.append("d3")
+            if 1 <= (today - cd).days <= 7: buckets.append("d7")
+            if month_start <= cd <= yest: buckets.append("month")
             if pm_start <= cd < month_start: buckets.append("pmonth")
         for p in buckets:
             Q[p]["leads"] += 1
@@ -916,12 +918,12 @@ def _tally_manager(rows, today, phone_of, row_ok):
             booked += 1
             booked_keys.append("%s|%s" % (k[0], k[1]))
             if cd:
-                if 0 <= (today - cd).days < 7:
+                if 1 <= (today - cd).days <= 7:
                     b7 += 1
-                if 0 <= (today - cd).days < 3:
+                if 1 <= (today - cd).days <= 3:
                     b3 += 1
                 if cd == yest: bY += 1
-                if cd >= month_start: bM += 1
+                if month_start <= cd <= yest: bM += 1
                 if pm_start <= cd < month_start: bPM += 1
                 if cd == today:
                     b1 += 1
@@ -1256,7 +1258,7 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
             q = qmap.get(aid) if m in raw_ok else None
             book = q["book"] if q else None
             bud, blvl = bmap.get(aid, (None, None))
-            res.append({"m": m, "campaign": a["campaign"], "adset": a["adset"],
+            res.append({"m": m, "id": aid, "campaign": a["campaign"], "adset": a["adset"],
                         "act": (aid in liveA) if liveA is not None else True,
                         "budget": bud, "blvl": blvl,
                         "spend": sp, "leads": ld,
@@ -1550,6 +1552,119 @@ def _range_cpl(days, dfrom, dto):
     sp = sum(v[0] for d, v in days.items() if dfrom <= d <= dto)
     ld = sum(v[1] for d, v in days.items() if dfrom <= d <= dto)
     return round(sp, 2), ld, (round(sp / ld, 2) if ld else None)
+
+def _agg_days(days, lo, hi):
+    s = l = b = 0.0
+    for d, v in (days or {}).items():
+        if lo <= d <= hi:
+            s += v[0] or 0; l += v[1] or 0; b += (v[2] if len(v) > 2 else 0) or 0
+    return s, l, b
+
+def build_scale(out):
+    """Чи можна масштабувати кожен активний ад-сет — ТІ САМІ правила, що scripts/scale.py
+    скіла meta-ads-analysis (Ірина, 10.10; на сайт — 18.10). {adset_id: {v, to, pct, until, why}}:
+      v = "up" (можна, to/pct), "wait" (until), "no" (why), "new" (тест ≤3 дн.).
+    1) факт адміна менеджера за 7 дн. (заповнені дні) ≤ жовтого порогу міста; 2) запис CRM ад-сета
+    за 14 зрілих днів (ліди D-15…D-2) ≤0.9× менеджера і ≥5 записів; 3) ≥3 дні після зміни бюджету;
+    4) після підняття ≥4 дні і «втрималось» (ціна ліда не +20 п.п. понад сусідів, запис ≤1.3×);
+    5) частота 7 дн. <1.8. Крок +20% (+30%, якщо ≥10 записів і запис ≤0.7× менеджера)."""
+    LC = out.get("lifecycle") or []; H = out.get("adsHist") or {}
+    M = out.get("managers") or {}; FD = out.get("factDaily") or {}
+    if not LC:
+        return None
+    T = datetime.date.fromisoformat(TODAY)
+    D = lambda k: (T + datetime.timedelta(days=k)).isoformat()
+    ddm = lambda s: "%s.%s" % (s[8:10], s[5:7])
+    A7 = {(r.get("m"), r.get("adset")): r for r in ((out.get("adsets") or {}).get("d7") or [])}
+    lo14, hi14 = D(-15), D(-2)
+    health = {}
+    for m, n in M.items():
+        fdm = FD.get(m) or {}
+        last = max((k for k in fdm if k < TODAY), default=None)
+        thr = CPA_THR.get(n.get("city"))
+        if not last or not thr:
+            health[m] = (None, thr); continue
+        sp = sum((n["spend"][i] or 0) for i, d in enumerate(n.get("dates") or []) if D(-6) <= d <= last)
+        b = sum(v or 0 for d, v in fdm.items() if D(-6) <= d <= last)
+        health[m] = (sp / b if b else None, thr)
+    owner = {r.get("id"): r.get("m") for r in LC}
+    own = lambda aid, r: owner.get(aid, r.get("m"))
+    mgr14 = {}
+    for aid, r in H.items():
+        x = _agg_days(r.get("days"), lo14, hi14)
+        t = mgr14.setdefault(own(aid, r), [0, 0, 0])
+        t[0] += x[0]; t[1] += x[1]; t[2] += x[2]
+    BL = out.get("budgetLog") or {}
+    res = {}
+    for r in LC:
+        m, aid, bud = r.get("m"), r.get("id"), r.get("budget") or 0
+        if str(m).startswith("Инста") or not aid:
+            continue
+        chg = r.get("chg") or {}; cd = chg.get("date")
+        # lifecycle бачить лише зміни з поточного вікна /activities; budgetLog накопичує всю
+        # історію — беремо НАЙПІЗНІШУ зміну звідти (18.10: Алиса paris25 підняли 13.10, а chg був 20.08)
+        evs = [e for e in (BL.get(aid) or []) if e.get("date")]
+        if evs:
+            le = max(evs, key=lambda e: (e.get("t") or e["date"]))
+            if not cd or le["date"] > cd:
+                chg = {"date": le["date"], "time": le.get("time"), "from": le.get("from"), "to": le.get("to")}
+                cd = chg["date"]
+        h = (H.get(aid) or {}).get("days") or {}
+        cpa_m, thr = health.get(m, (None, None))
+        s14, l14, b14 = _agg_days(h, lo14, hi14)
+        mt = mgr14.get(m) or [0, 0, 0]
+        mcpa = mt[0] / mt[2] if mt[2] else None
+        cpa14 = s14 / b14 if b14 else None
+        freq = (A7.get((m, r.get("adset"))) or {}).get("freq")
+        nums = "запис CRM за 14 зрілих днів %s (%d зап.) проти %s у менеджера; факт менеджера 7 дн. %s" % (
+            ("$%.2f" % cpa14) if cpa14 else "—", b14, ("$%.2f" % mcpa) if mcpa else "—",
+            ("$%.2f" % cpa_m) if cpa_m else "—")
+        v = None
+        if (r.get("age") or 99) <= 3:
+            v = {"v": "new", "short": "тест", "why": "новий ад-сет (%s дн.) — ще тест" % r.get("age")}
+        elif cpa_m is None or thr is None:
+            v = {"v": "no", "short": "нема факту", "why": "немає факту адміна або порогу міста"}
+        elif cpa_m > thr[0]:
+            v = {"v": "no", "short": "менеджер дорогий", "why": "менеджер дорогий: факт 7 дн. $%.2f > $%d — спершу здешевити" % (cpa_m, thr[0])}
+        elif b14 < 5 or cpa14 is None or not mcpa:
+            v = {"v": "no", "short": "мало записів", "why": "мало записів за 14 зрілих днів (%d, треба ≥5) — рано судити; %s" % (b14, nums)}
+        elif cpa14 > 0.9 * mcpa:
+            v = {"v": "no", "short": "не кращий за менеджера", "why": "не кращий за менеджера (треба ≤0.9×): " + nums}
+        elif freq is not None and freq >= 1.8:
+            v = {"v": "no", "short": "частота", "why": "частота %.2f ≥ 1.8 — спершу новий креатив" % freq}
+        elif cd:
+            since = (T - datetime.date.fromisoformat(cd)).days
+            up = bool(chg.get("from") and chg.get("to") and chg["to"] > chg["from"])
+            if since < 3:
+                v = {"v": "wait", "until": D(3 - since), "why": "бюджет мінявся %s — чекати 3 дні; %s" % (ddm(cd), nums)}
+            elif up and cd > D(-4):
+                u = (datetime.date.fromisoformat(cd) + datetime.timedelta(days=5)).isoformat()
+                v = {"v": "wait", "until": u, "why": "після підняття %s ще мало днів із дозрілими записами; %s" % (ddm(cd), nums)}
+            elif up:
+                b_lo = (datetime.date.fromisoformat(cd) - datetime.timedelta(days=7)).isoformat()
+                b_hi = (datetime.date.fromisoformat(cd) - datetime.timedelta(days=1)).isoformat()
+                s0, l0, bb0 = _agg_days(h, b_lo, b_hi); s1, l1, _ = _agg_days(h, cd, D(-1))
+                sm, _, bm = _agg_days(h, cd, D(-2))
+                cs0 = cl0 = cs1 = cl1 = 0
+                for oid, o in H.items():
+                    if oid == aid or own(oid, o) != m:
+                        continue
+                    x = _agg_days(o.get("days"), b_lo, b_hi); y = _agg_days(o.get("days"), cd, D(-1))
+                    cs0 += x[0]; cl0 += x[1]; cs1 += y[0]; cl1 += y[1]
+                if l0 and l1:
+                    d_own = (s1 / l1) / (s0 / l0) - 1
+                    d_ctl = ((cs1 / cl1) / (cs0 / cl0) - 1) if cl0 and cl1 else 0
+                    cpa0, cpa1 = (s0 / bb0 if bb0 else None), (sm / bm if bm else None)
+                    if d_own - d_ctl > 0.20 or (cpa0 and cpa1 and cpa1 > 1.3 * cpa0):
+                        v = {"v": "no", "short": "після підняття гірше", "why": "після підняття %s погіршився: ціна ліда %+.0f%% (сусіди %+.0f%%), запис %s→%s" % (
+                            ddm(cd), 100 * d_own, 100 * d_ctl, ("$%.2f" % cpa0) if cpa0 else "—", ("$%.2f" % cpa1) if cpa1 else "—")}
+        if v is None:
+            step = 0.3 if (b14 >= 10 and cpa14 <= 0.7 * mcpa) else 0.2
+            v = {"v": "up", "pct": round(100 * step), "to": round(bud * (1 + step)),
+                 "why": "%s; частота %s" % (nums, freq if freq is not None else "—")}
+        v["chg"] = chg if cd else None
+        res[aid] = v
+    return res
 
 def build_lifecycle(out):
     """Життєвий цикл кожного активного ад-сета з бюджетом: вік, днів на поточному
@@ -2105,17 +2220,17 @@ def main():
         if node is None:
             continue
         tot = b7 = b3 = bY = bM = bPM = b1 = 0
-        _ms = _td.replace(day=1); _pms = (_ms - datetime.timedelta(days=1)).replace(day=1)
+        _ms = (_td - datetime.timedelta(days=1)).replace(day=1); _pms = (_ms - datetime.timedelta(days=1)).replace(day=1)
         for ds, v in days.items():
             b = int(v.get("b", 0))
             if not b:
                 continue
             cd = datetime.date.fromisoformat(ds)
             tot += b
-            if 0 <= (_td - cd).days < 7: b7 += b
-            if 0 <= (_td - cd).days < 3: b3 += b
+            if 1 <= (_td - cd).days <= 7: b7 += b
+            if 1 <= (_td - cd).days <= 3: b3 += b
             if cd == _td - datetime.timedelta(days=1): bY += b
-            if cd >= _ms: bM += b
+            if _ms <= cd < _td: bM += b
             if _pms <= cd < _ms: bPM += b
             if cd == _td: b1 += b
         node["bookings"] = tot; node["bookings7d"] = b7; node["bookings3d"] = b3; node["bookingsYest"] = bY
@@ -2125,13 +2240,15 @@ def main():
     # --- Meta-метрики по періодах (CTR / CPM / частота) + ад-сети й креативи по періодах ---
     td = datetime.date.fromisoformat(TODAY)
     yest_s = (td - datetime.timedelta(days=1)).isoformat()
-    d3from = (td - datetime.timedelta(days=2)).isoformat()
-    d7from = (td - datetime.timedelta(days=6)).isoformat()
-    mstart = td.replace(day=1).isoformat()
-    _pme = td.replace(day=1) - datetime.timedelta(days=1)   # попередній календарний місяць
+    # лише закриті дні (Ірина, 18.10): сьогоднішній неповний день у періоди не входить
+    d3from = (td - datetime.timedelta(days=3)).isoformat()
+    d7from = (td - datetime.timedelta(days=7)).isoformat()
+    _ymd = td - datetime.timedelta(days=1)
+    mstart = _ymd.replace(day=1).isoformat()
+    _pme = _ymd.replace(day=1) - datetime.timedelta(days=1)   # попередній календарний місяць
     _pms = _pme.replace(day=1)
-    PERIODS = {"yest": (yest_s, yest_s), "d3": (d3from, TODAY), "d7": (d7from, TODAY),
-               "month": (mstart, TODAY),
+    PERIODS = {"yest": (yest_s, yest_s), "d3": (d3from, yest_s), "d7": (d7from, yest_s),
+               "month": (mstart, yest_s),
                "pmonth": (_pms.isoformat(), _pme.isoformat()),
                "all": (DATE_FROM, TODAY)}
     try:
@@ -2323,6 +2440,14 @@ def main():
                 for c in sorted({r["verdict"]["code"] for r in lc}))))
     except Exception as e:
         print("lifecycle failed -> carrying over:", str(e)[:150])
+    try:
+        sa = build_scale(out)
+        if sa is not None:
+            out["scaleAdv"] = sa
+            print("scale: " + ", ".join("%s:%d" % (k, sum(1 for x in sa.values() if x["v"] == k))
+                                        for k in ("up", "wait", "no", "new")))
+    except Exception as e:
+        print("scale failed -> carrying over:", str(e)[:150])
 
     try:
         out["alerts"] = build_alerts(out)

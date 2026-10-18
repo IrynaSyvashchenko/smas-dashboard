@@ -534,7 +534,8 @@ def _tally_manager(rows, today, raw_idx):
             continue
         seen[(ph, filled[i])] = (r, filled[i])
     yest = today - datetime.timedelta(days=1)
-    month_start = today.replace(day=1)
+    # періоди — лише ЗАКРИТІ дні (Ірина, 18.10): 3/7 днів до вчора, місяць = місяць учорашнього дня
+    month_start = yest.replace(day=1)
     pm_start = (month_start - datetime.timedelta(days=1)).replace(day=1)
     booked = b7 = b1 = leads = 0
     bY = bM = bPM = b3 = 0
@@ -558,9 +559,9 @@ def _tally_manager(rows, today, raw_idx):
         buckets = ["all"]
         if cd:
             if cd == yest: buckets.append("yest")
-            if 0 <= (today - cd).days < 3: buckets.append("d3")
-            if 0 <= (today - cd).days < 7: buckets.append("d7")
-            if cd >= month_start: buckets.append("month")
+            if 1 <= (today - cd).days <= 3: buckets.append("d3")
+            if 1 <= (today - cd).days <= 7: buckets.append("d7")
+            if month_start <= cd <= yest: buckets.append("month")
             if pm_start <= cd < month_start: buckets.append("pmonth")
         bkind = _book_kind(r) if bk else None
         for p in buckets:
@@ -574,10 +575,10 @@ def _tally_manager(rows, today, raw_idx):
             booked += 1
             booked_keys.append("%s|%s" % (ph, ct))
             if cd:
-                if 0 <= (today - cd).days < 7: b7 += 1
-                if 0 <= (today - cd).days < 3: b3 += 1
+                if 1 <= (today - cd).days <= 7: b7 += 1
+                if 1 <= (today - cd).days <= 3: b3 += 1
                 if cd == yest: bY += 1
-                if cd >= month_start: bM += 1
+                if month_start <= cd <= yest: bM += 1
                 if pm_start <= cd < month_start: bPM += 1
                 if cd == today:
                     b1 += 1
@@ -1005,13 +1006,15 @@ def main():
     # ---- періодні метрики + ад-сети/креативи ----
     td = datetime.date.fromisoformat(TODAY)
     yest_s = (td - datetime.timedelta(days=1)).isoformat()
-    d3from = (td - datetime.timedelta(days=2)).isoformat()
-    d7from = (td - datetime.timedelta(days=6)).isoformat()
-    mstart = td.replace(day=1).isoformat()
-    _pme = td.replace(day=1) - datetime.timedelta(days=1)
+    # лише закриті дні (Ірина, 18.10): сьогоднішній неповний день у періоди не входить
+    d3from = (td - datetime.timedelta(days=3)).isoformat()
+    d7from = (td - datetime.timedelta(days=7)).isoformat()
+    _ymd = td - datetime.timedelta(days=1)
+    mstart = _ymd.replace(day=1).isoformat()
+    _pme = _ymd.replace(day=1) - datetime.timedelta(days=1)
     _pms = _pme.replace(day=1)
-    PERIODS = {"yest": (yest_s, yest_s), "d3": (d3from, TODAY), "d7": (d7from, TODAY),
-               "month": (mstart, TODAY),
+    PERIODS = {"yest": (yest_s, yest_s), "d3": (d3from, yest_s), "d7": (d7from, yest_s),
+               "month": (mstart, yest_s),
                "pmonth": (_pms.isoformat(), _pme.isoformat()),
                "all": (DATE_FROM, TODAY)}
 
