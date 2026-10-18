@@ -477,11 +477,11 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     if(!s||a.act===false) return h;
     const c=s.chg;
     if(c&&c.date) h+=`<br><span style="color:var(--mut);font-size:.72rem">`+
-      (c.from&&c.to?`${c.to>c.from?'↑':'↓'} ${dd(c.date)}: $${c.from}→$${c.to}`:`змінено ${dd(c.date)}`)+`</span>`;
+      (c.from&&c.to?`${c.to>c.from?'↑':'↓'} ${dd(c.date)}: $${c.from}→$${c.to}`:c.created?`створено ${dd(c.date)}`:`змінено ${dd(c.date)}`)+`</span>`;
     const tip=String(s.why||'').replace(/"/g,'&quot;');
     const tag=s.v==='up'?`<span class="tag g" title="${tip}">можна +${s.pct}% → $${s.to}</span>`:
-              s.v==='wait'?`<span class="tag y" title="${tip}">чекати до ${dd(s.until)}</span>`:
-              s.v==='new'?`<span class="tag y" title="${tip}">тест</span>`:
+              s.v==='wait'?`<span class="tag y" title="${tip}">${s.until?'чекати до '+dd(s.until):'чекати: '+(s.short||'')}</span>`:
+              s.v==='new'?`<span class="tag y" title="${tip}">новий${s.until?' · оцінка з '+dd(s.until):''}</span>`:
               `<span class="tag" style="color:var(--mut)" title="${tip}">не масшт.: ${s.short||''}</span>`;
     return h+`<br>${tag}`;
   }

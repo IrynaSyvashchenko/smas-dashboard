@@ -1620,19 +1620,32 @@ def build_scale(out):
             ("$%.2f" % cpa14) if cpa14 else "—", b14, ("$%.2f" % mcpa) if mcpa else "—",
             ("$%.2f" % cpa_m) if cpa_m else "—")
         v = None
-        if (r.get("age") or 99) <= 3:
-            v = {"v": "new", "short": "тест", "why": "новий ад-сет (%s дн.) — ще тест" % r.get("age")}
+        # подія без сум (from/to None) = СТВОРЕННЯ ад-сета, а не зміна бюджету
+        created_evt = bool(cd) and chg.get("from") is None and chg.get("to") is None
+        # старт = перший день із витратами (lifecycle.age рахує від created, а запуск буває пізніше)
+        first = min((d for d, x in h.items() if (x[0] or 0) > 0), default=None)
+        full = (T - datetime.date.fromisoformat(first)).days if first else 0
+        if (r.get("age") or 99) <= 3 or (first and full < 3):
+            st = first or r.get("created") or ""
+            v = {"v": "new", "short": "новий", "until": D(3 - full) if first else None,
+                 "why": "новий ад-сет: запущено %s, закритих днів %d — оцінка після 3 повних днів; %s" % (
+                     ddm(st) if st else "?", full, nums)}
         elif cpa_m is None or thr is None:
             v = {"v": "no", "short": "нема факту", "why": "немає факту адміна або порогу міста"}
         elif cpa_m > thr[0]:
             v = {"v": "no", "short": "менеджер дорогий", "why": "менеджер дорогий: факт 7 дн. $%.2f > $%d — спершу здешевити" % (cpa_m, thr[0])}
+        elif b14 < 5 and cpa14 is not None and mcpa and cpa14 <= 0.9 * mcpa:
+            # ціна запису вже добра, але записів на дозрілих днях ще <5 — не «ні», а «чекати»
+            v = {"v": "wait", "short": "добрий, %d/5 записів" % b14,
+                 "why": "запис %s — кращий за менеджера, але на дозрілих днях лише %d записи (для рішення треба ≥5, щоб не масштабувати випадковість); %s" % (
+                     "$%.2f" % cpa14, b14, nums)}
         elif b14 < 5 or cpa14 is None or not mcpa:
             v = {"v": "no", "short": "мало записів", "why": "мало записів за 14 зрілих днів (%d, треба ≥5) — рано судити; %s" % (b14, nums)}
         elif cpa14 > 0.9 * mcpa:
             v = {"v": "no", "short": "не кращий за менеджера", "why": "не кращий за менеджера (треба ≤0.9×): " + nums}
         elif freq is not None and freq >= 1.8:
             v = {"v": "no", "short": "частота", "why": "частота %.2f ≥ 1.8 — спершу новий креатив" % freq}
-        elif cd:
+        elif cd and not created_evt:
             since = (T - datetime.date.fromisoformat(cd)).days
             up = bool(chg.get("from") and chg.get("to") and chg["to"] > chg["from"])
             if since < 3:
@@ -1662,7 +1675,7 @@ def build_scale(out):
             step = 0.3 if (b14 >= 10 and cpa14 <= 0.7 * mcpa) else 0.2
             v = {"v": "up", "pct": round(100 * step), "to": round(bud * (1 + step)),
                  "why": "%s; частота %s" % (nums, freq if freq is not None else "—")}
-        v["chg"] = chg if cd else None
+        v["chg"] = (dict(chg, created=True) if created_evt else chg) if cd else None
         res[aid] = v
     return res
 
