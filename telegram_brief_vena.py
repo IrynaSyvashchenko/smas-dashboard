@@ -10,6 +10,7 @@
 Дані вже пораховані дашбордом (vena/data.json) — тут нічого не тягнеться з Meta.
 Секрет (GitHub Actions): TELEGRAM_BOT_TOKEN — токен бота @ad_smas_lifting_bot.
 """
+import math
 import os, json, time, datetime, urllib.request, urllib.parse, sys
 
 CHAT_ID  = "901823018"
@@ -66,11 +67,41 @@ def build(d, use_today=True):
         cpb = (" (запис $%.2f)" % (sp / bk)) if bk else ""
         L.append("%s: $%.0f · %d л%s · %d з%s" % (m, sp, ld, cpl, bk, cpb))
 
+    # ---- норми напрямків, як у дашборді /vena/ (з 20.10.2026; пороги від чека/$35 прибрано) ----
+    yest = today - datetime.timedelta(days=1)
+    def pcdf(k, lam):
+        q = math.exp(-lam); s = q
+        for i in range(1, int(k) + 1):
+            q *= lam / i; s += q
+        return min(1.0, s)
+    def sig(p):
+        if p < 0.05: return "різниця реальна (випадковість %s%%)" % ("<1" if p < 0.01 else round(p * 100))
+        if p < 0.2:  return "слабкий сигнал (%d%%), під наглядом" % round(p * 100)
+        return "мало даних (%d%%), під наглядом" % round(p * 100)
+    def crm_norm(m):
+        n = M.get(m) or {}; bd = n.get("bookingsDay")
+        if not isinstance(bd, list): return None
+        lo = (yest - datetime.timedelta(days=30)).isoformat(); hi = (yest - datetime.timedelta(days=2)).isoformat()
+        sp = ld = bk = 0
+        for i, dt_ in enumerate(n.get("dates") or []):
+            if lo <= dt_ <= hi:
+                sp += n["spend"][i] or 0; ld += n["leads"][i] or 0; bk += bd[i] or 0
+        return {"cpa": sp / bk, "cpl": sp / ld, "conv": bk / ld} if bk >= 5 and ld else None
+    def over_norm(o):
+        """Ад-сет/креатив: запис ≥1.5× CRM-норми свого напрямку при витратах ≥2× норми -> рядок або None."""
+        nn = crm_norm(o["m"])
+        if not nn or (o.get("spend") or 0) < 2 * nn["cpa"]: return None
+        bk = o.get("book") or 0; cpa = (o["spend"] / bk) if bk else float("inf")
+        if cpa < 1.5 * nn["cpa"]: return None
+        p = pcdf(bk, (o.get("leads") or 0) * nn["conv"])
+        return ("🔴" if p < 0.05 else "🟡", "запис %s (%d з %d лідів) проти норми $%.2f — %s"
+                % (("$%.2f" % cpa) if bk else "—", bk, o.get("leads") or 0, nn["cpa"], sig(p)))
+
     def days_live(m):
         s = M.get(m, {}).get("start")
         return ((today - datetime.date.fromisoformat(s)).days + 1) if s else 99
 
-    al, dead = [], set()
+    al, dead, flagged = [], set(), set()
     for a in (d.get("adsets", {}).get("yest") or []):
         if a.get("act") is False:
             continue
@@ -83,18 +114,20 @@ def build(d, use_today=True):
             continue
         dl = days_live(m)
         per = ("%d дн." % dl) if dl < 7 else "7 днів"
-        if (a.get("spend") or 0) >= 25 and (a.get("book") or 0) == 0:
-            al.append("• %s (%s): $%.0f за %s і 0 записів" % (a["adset"], m, a["spend"], per))
-        elif a.get("cpa") is not None and a["cpa"] >= 35:
-            al.append("• %s (%s): запис $%.2f (%s) — дорого" % (a["adset"], m, a["cpa"], per))
+        r = over_norm(a)
+        if r:
+            flagged.add((m, a["adset"]))
+            al.append("%s %s (%s), %s: %s" % (r[0], a["adset"], m, per, r[1]))
     # креатив, що за 7 днів з'їв $15+ і не дав жодного запису (ловить слабкі відео
     # всередині робочого ад-сета, як quiz_video1)
     for c in (d.get("creatives", {}).get("d7") or []):
         if c.get("act") is False or c.get("adset") in dead:
             continue
-        if (c.get("spend") or 0) >= 15 and (c.get("book") or 0) == 0:
-            al.append("• Креатив %s (%s): $%.2f за 7 днів без записів — кандидат на вимкнення"
-                      % (c["name"], c["m"], c["spend"]))
+        if (c["m"], c.get("adset")) in flagged:
+            continue   # уже сказано на рівні ад-сета
+        r = over_norm(c)
+        if r:
+            al.append("%s Креатив %s (%s): %s" % (r[0], c["name"], c["m"], r[1]))
     for c in (d.get("creatives", {}).get("yest") or []):
         if c.get("act") is False or c.get("adset") in dead:
             continue
@@ -102,7 +135,7 @@ def build(d, use_today=True):
             al.append("• Креатив %s (%s): частота %.2f — вигорів" % (c["name"], c["m"], c["freq"]))
     L.append("")
     if al:
-        L.append("🔴 Що змінити:"); L += al
+        L.append("🔴 Що змінити:" if any(x.startswith(("🔴", "•")) for x in al) else "🟡 Дорожче за норму (під наглядом):"); L += al
     else:
         L.append("✅ Все спокійно: гроші без лідів не горять, записи не задорогі.")
 
@@ -117,7 +150,8 @@ def build(d, use_today=True):
             continue
         if a.get("freq") is not None and a["freq"] >= 2.2:
             continue
-        if a.get("cpa") is not None and a["cpa"] >= 35:
+        nn = crm_norm(s["m"])
+        if a.get("cpa") is not None and nn and a["cpa"] >= nn["cpa"]:
             continue
         b = s.get("budget") or 0
         sc.append("• %s (%s): $%.0f → $%.2f" % (s["adset"], s["m"], b, b * 1.25))
