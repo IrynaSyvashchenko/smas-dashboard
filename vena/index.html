@@ -371,42 +371,68 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         A.push(['bad',`💸 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> витрачено, <b>0 лідів</b> — перевір або вимкни.`]);
       }
     }
-    // CPA (ціна запису) по АД-СЕТАХ за 7 днів. Прив'язку записів до ад-сета полагоджено
-    // (raw_map: phone->adset_id, без вимоги збігу менеджера — паризькі сирі вкладки перехресні),
-    // тому адсет-CPA тепер надійна. Пороги від чека міста: ≥25% або ≥$25 без записів — критично,
-    // ≥15% — попередження. Нові РК (<4 днів від старту) не судимо — записи ще доганяють ліди.
+    // ---- Алерти «дорожче за норму» (як у головному дашборді, з 20.10.2026) ----
+    // Норма = власний напрямок за 30 днів (пороги «% від чека» прибрано). Напрямок судимо за
+    // ФАКТОМ адмінів (по заповнених днях), ад-сети/креативи — за таблицею лідів проти CRM-норми
+    // того ж напрямку (обидві сторони з однаковим недообліком, напр. Відень ~67%).
+    // Пороги як у головному: напрямок ≥1.3× норми, ад-сет/креатив ≥1.5× (мін. витрати 2× норми).
+    // Колір — за статистикою (Пуассон): P<5% — червоний «різниця реальна», інакше жовтий «під наглядом»
+    // з шансом випадковості в тексті (малі обсяги не ховаємо, але й не кричимо).
     const dlv=m=>{const s=M[m]?.start;return s?Math.floor((new Date(today)-new Date(s))/864e5)+1:99;};
-    // Рівень НАПРЯМКУ (картка): витрати з Meta, записи = max(статуси CRM, факт адмінів) за 7 днів.
-    // Не залежить від привʼязки лідів до оголошень, тому спрацьовує навіть коли сира вкладка завмерла
-    // (21.09: Київ/Тернопіль — запис по $50–60, а алертів не було, бо адсет-алерти вимикались запобіжником).
+    const pcdf=(k,lam)=>{let q=Math.exp(-lam),s=q;for(let i=1;i<=k;i++){q*=lam/i;s+=q;}return Math.min(1,s);};
+    const pctS=p=>p<0.01?'<1':String(Math.round(p*100));
+    const sig=p=>p<0.05?`<b>різниця реальна</b> (шанс випадковості ${pctS(p)}%)`:p<0.2?`слабкий сигнал (шанс випадковості ${pctS(p)}%) — під наглядом 2–3 дні`:`поки може бути випадковість (${pctS(p)}%) — мало даних, під наглядом`;
+    // CRM-норма напрямку: ліди D−31…D−2 (записи з останніх 2 днів ще доходять)
+    const crmNorm=m=>{const mm=M[m]; if(!mm||!Array.isArray(mm.bookingsDay)) return null;
+      const lo=addD(yest,-30), hi=addD(yest,-2); let sp=0,ld=0,bk=0;
+      mm.dates.forEach((d,i)=>{ if(d>=lo&&d<=hi){ sp+=mm.spend[i]||0; ld+=mm.leads[i]||0; bk+=mm.bookingsDay[i]||0; }});
+      return bk>=5&&ld?{cpa:sp/bk,cpl:sp/ld,conv:bk/ld}:null;};
+    // факт-норма напрямку: 30 днів до останнього заповненого адміном дня; витрати всіх напрямків рядка (стомат = форма + квіз)
+    const factWin=(m,from,to)=>{const f=FD&&FD[m]; if(!f) return null; const g=(FG[m]&&FG[m].length)?FG[m]:[m];
+      let sp=0,ld=0; g.forEach(n=>{const q=M[n]; if(q) q.dates.forEach((d,i)=>{ if(d>=from&&d<=to){ sp+=q.spend[i]||0; ld+=q.leads[i]||0; }});});
+      let bk=0; for(const d in f) if(d>=from&&d<=to) bk+=f[d]||0; return {sp,ld,bk};};
+    const factLast=m=>{const f=FD&&FD[m]; if(!f) return null; const ds=Object.keys(f).filter(d=>d<=yest).sort(); return ds.length?ds[ds.length-1]:null;};
     for(const [m,mm] of Object.entries(M)){
-      if(isInst(m)||mm.act===false||!mm.dates) continue;
-      if(dlv(m)<4) continue;
-      let sp7=0; mm.dates.forEach((d,i)=>{ if(P.d7.pred(d)) sp7+=mm.spend[i]||0; });
-      const bkCrm=mm.bookings7d||0, f7=factSum(m,P.d7)||0, bk7=Math.max(bkCrm,f7);
-      const chk=mm.check?.usd, cpa=bk7?sp7/bk7:null;
-      const src=f7>bkCrm?'факт адмінів':'таблиця лідів';
-      if(sp7>=25&&bk7===0)
-        A.push(['bad',`💰 <b>${m}</b>: <b>${fmt(sp7)}</b> за 7 днів і <b>0 записів</b> (ні в таблиці лідів, ні у звіті адмінів) — ліди не конвертяться.`]);
-      else if(chk&&cpa!=null&&cpa>=chk*0.25)
-        A.push(['bad',`💰 <b>${m}</b>: запис коштує <b>${fmt(cpa)}</b> за 7 днів (${bk7} зап., ${src}) — це ≥25% чека ${fmt(chk,0)}. Дивись ад-сети й креативи нижче.`]);
-      else if(chk&&cpa!=null&&cpa>=chk*0.15)
-        A.push(['warn',`💰 <b>${m}</b>: запис коштує <b>${fmt(cpa)}</b> за 7 днів (${bk7} зап., ${src}) — дорожче за 15% чека ${fmt(chk,0)}.`]);
+      if(isInst(m)||mm.act===false||!mm.dates||dlv(m)<4) continue;
+      const last=factLast(m);
+      if(!last){   // напрямок без рядка у звіті адмінів (квіз входить у «Стомат Київ») — лише «0 записів»
+        let sp7=0; mm.dates.forEach((d,i)=>{ if(P.d7.pred(d)) sp7+=mm.spend[i]||0; });
+        if(sp7>=25&&(mm.bookings7d||0)===0&&!FG['Стомат Київ']?.includes(m))
+          A.push(['bad',`💰 <b>${m}</b>: <b>${fmt(sp7)}</b> за 7 днів і <b>0 записів</b> у таблиці лідів — ліди не конвертяться.`]);
+        continue; }
+      const nw=factWin(m,addD(last,-29),last), cw=factWin(m,addD(last,-6),last);
+      if(!nw||nw.bk<5||!cw||!cw.sp) continue;
+      const nCpa=nw.sp/nw.bk, nCpl=nw.ld?nw.sp/nw.ld:null, nConv=nw.ld?nw.bk/nw.ld:null;
+      if(cw.sp<2*nCpa) continue;
+      const cpa=cw.bk?cw.sp/cw.bk:Infinity; if(cpa<1.3*nCpa) continue;
+      const p=pcdf(cw.bk,cw.sp/nCpa);
+      const cpl=cw.ld?cw.sp/cw.ld:null, conv=cw.ld?cw.bk/cw.ld:null;
+      const why=[cpl!=null&&nCpl?`ліди ${fmt(cpl)} проти ${fmt(nCpl)}`:'', conv!=null&&nConv?`у запис ${Math.round(conv*100)}% лідів проти ${Math.round(nConv*100)}%`:''].filter(Boolean).join(', ');
+      A.push([p<0.05?'bad':'warn',`💰 <b>${m}</b>${factLbl(m)}: запис <b>${cw.bk?fmt(cpa):'—'}</b> за 7 днів до ${dd(last)} (${cw.bk} зап., факт адмінів) проти норми напрямку <b>${fmt(nCpa)}</b> (30 дн.) — ${sig(p)}. Чому: ${why}. Дивись ад-сети й креативи нижче.`]);
     }
     // запобіжник: якщо на ад-сети менеджера «сіло» менше 60% його записів за 7 днів
     // (сира вкладка відстає/завмерла) — адсет-CPA завищена, такі алерти пропускаємо
     const asBk7=new Map();
     for(const a of (AS.d7||[])){ if(isInst(a.m)) continue; asBk7.set(a.m,(asBk7.get(a.m)||0)+(a.book||0)); }
     const unrel=m=>{const c=M[m]?.bookings7d||0; return c>=5&&(asBk7.get(m)||0)<c*0.6;};
+    // ад-сет / креатив проти CRM-норми свого напрямку
+    const objAlert=(kind,name,o)=>{
+      const n=crmNorm(o.m); if(!n||(o.spend||0)<2*n.cpa) return false;
+      const bk=o.book||0, cpa=bk?o.spend/bk:Infinity; if(cpa<1.5*n.cpa) return false;
+      const p=pcdf(bk,(o.leads||0)*n.conv);
+      const cpl=o.leads?o.spend/o.leads:null, conv=o.leads?bk/o.leads:null;
+      const why=[cpl!=null?`ліди ${fmt(cpl)} проти ${fmt(n.cpl)}`:'', conv!=null?`у запис ${Math.round(conv*100)}% лідів проти ${Math.round(n.conv*100)}%`:''].filter(Boolean).join(', ');
+      A.push([p<0.05?'bad':'warn',`💰 ${kind} <b>${name}</b> (${o.m}): запис <b>${bk?fmt(cpa):'—'}</b> за 7 днів (${bk} зап. з ${o.leads||0} лідів, таблиця лідів) проти норми напрямку <b>${fmt(n.cpa)}</b> — ${sig(p)}. Чому: ${why}. Записи з лідів останніх 2 днів ще дозрівають.`]);
+      return true;};
+    const asAlerted=new Set();
     for(const a of (AS.d7||[])){
-      if(isInst(a.m)||a.act===false||deadAdsets.has(a.adset)||unrel(a.m)) continue; const dl=dlv(a.m); if(dl<4) continue; const per=dl<7?dl+' дн.':'7 днів';
-      const chk=M[a.m]?.check?.usd;
-      if(a.spend>=25&&a.book===0)
-        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): <b>${fmt(a.spend)}</b> за ${per} і <b>0 записів</b> — ліди не конвертяться.`]);
-      else if(chk&&a.cpa!=null&&a.cpa>=chk*0.25)
-        A.push(['bad',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — це ≥25% чека ${fmt(chk,0)}.`]);
-      else if(chk&&a.cpa!=null&&a.cpa>=chk*0.15)
-        A.push(['warn',`💰 Ад-сет <b>${a.adset}</b> (${a.m}): запис коштує <b>${fmt(a.cpa)}</b> (${per}) — дорожче за 15% чека ${fmt(chk,0)}.`]);
+      if(isInst(a.m)||a.act===false||deadAdsets.has(a.adset)||unrel(a.m)||dlv(a.m)<4) continue;
+      if(objAlert('Ад-сет',a.adset,a)) asAlerted.add(a.m+'|'+a.adset);
+    }
+    for(const c of (CR.d7||[])){
+      if(isInst(c.m)||c.act===false||deadAdsets.has(c.adset)||unrel(c.m)) continue;
+      const sh=crShare(c); if(asAlerted.has(c.m+'|'+c.adset)&&(sh==null||sh>=0.8)) continue;   // уже сказано на рівні ад-сета
+      objAlert('Креатив',c.name+' · '+c.adset,c);
     }
     for(const c of (CR[k]||[])){
       if(deadAdsets.has(c.adset)) continue;   // алерт по цілому ад-сету вже є
