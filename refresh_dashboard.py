@@ -409,25 +409,70 @@ def graph_rows(fields, dfrom, dto):
         return _graph_daily_chunked(fields, dfrom, dto)
     return _graph_once(fields, dfrom, dto)
 
-def _graph_daily_chunked(fields, dfrom, dto, span=1):
-    """Денний зріз вікнами по span днів; вікно, що впало на «забагато даних»,
-    ріжеться навпіл (до одного дня). Так довжина історії більше не впирається в ліміт.
+# 21.10.2026: Meta віддає spend = 0 у КОЖНОМУ рядку, якщо в запиті з time_increment=1
+# більше одного дня (будь-який рівень; ліди правильні). Запит за ОДИН день — правильний.
+# Але ~300 поденних запитів за прогін Meta обрізає (далі HTTP 400 на ад-сетах/оголошеннях).
+# Тому: кеш денних рядків у файлі; поденно перепитуємо лише останні DAILY_REFRESH_DAYS днів
+# + до DAILY_MAX_FETCH старих днів, яких у кеші ще нема. Дні, що не отримались, — у
+# DAILY_MISSING (main() і adsHist беруть їх зі старого data.json, а не нулі).
+DAILY_CACHE_FILE   = "meta_daily_cache.json"
+DAILY_REFRESH_DAYS = 7
+DAILY_MAX_FETCH    = 20
+DAILY_MISSING      = set()
+_DAILY_CACHE       = {}
 
-    21.10.2026: Meta віддає spend = 0 у КОЖНОМУ рядку, якщо в запиті з time_increment=1
-    більше одного дня (на будь-якому рівні; ліди при цьому правильні). Запит за ОДИН день —
-    правильний. Тому span=1 і запити паралельно (8 потоків), щоб прогін не розтягувався."""
+def _daily_cache():
+    if not _DAILY_CACHE:
+        try:
+            with open(DAILY_CACHE_FILE, encoding="utf-8") as f:
+                _DAILY_CACHE.update(json.load(f))
+        except (OSError, ValueError):
+            _DAILY_CACHE["_"] = {}
+    return _DAILY_CACHE
+
+def save_daily_cache():
+    c = {k: v for k, v in _DAILY_CACHE.items() if k != "_"}
+    cutoff = (datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=200)).isoformat()
+    for sig in c:
+        c[sig] = {d: rows for d, rows in c[sig].items() if d >= cutoff}
+    with open(DAILY_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(c, f, ensure_ascii=False, separators=(",", ":"))
+
+def _graph_daily_chunked(fields, dfrom, dto, span=1):
     from concurrent.futures import ThreadPoolExecutor
+    sig = ",".join(sorted(fields))
+    cache = _daily_cache().setdefault(sig, {})
     d1 = datetime.date.fromisoformat(dfrom); d2 = datetime.date.fromisoformat(dto)
-    win = []
+    fresh_from = (datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=DAILY_REFRESH_DAYS - 1)).isoformat()
+    days = []
     cur = d1
     while cur <= d2:
-        end = min(cur + datetime.timedelta(days=span - 1), d2)
-        win.append((cur, end)); cur = end + datetime.timedelta(days=1)
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        parts = list(ex.map(lambda w: _graph_split(fields, w[0], w[1]), win))
+        days.append(cur.isoformat()); cur += datetime.timedelta(days=1)
+    need = [d for d in days if d >= fresh_from]
+    missing_old = sorted((d for d in days if d < fresh_from and d not in cache), reverse=True)
+    need += missing_old[:DAILY_MAX_FETCH]
+    def one(d):
+        try:
+            return d, _graph_split(fields, datetime.date.fromisoformat(d), datetime.date.fromisoformat(d)), None
+        except Exception as e:
+            return d, None, str(e)[:200]
+    errs = []
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for d, rows, err in ex.map(one, need):
+            if rows is None:
+                errs.append((d, err))
+            else:
+                cache[d] = rows
     out = []
-    for p_ in parts:
-        out += p_
+    for d in days:
+        if d in cache:
+            out += cache[d]
+        else:
+            DAILY_MISSING.add(d)
+    print("  graph поденно [%s]: запитано %d дн., з кешу %d, бракує %d%s"
+          % (sig[:40], len(need) - len(errs), len([d for d in days if d in cache]) - (len(need) - len(errs)),
+             len([d for d in days if d not in cache]),
+             (" | помилки: %s" % errs[:2]) if errs else ""))
     return out
 
 def _graph_split(fields, a, b):
@@ -1399,7 +1444,7 @@ def build_adset_hist(cur, bk, raw_map, raw_ok):
     prev = cur.get("adsHist") or {}
     for aid, ph in prev.items():
         old_days = {d: v for d, v in (ph.get("days") or {}).items()
-                    if cutoff <= d < hfrom}
+                    if cutoff <= d and (d < hfrom or d in DAILY_MISSING)}
         if aid in fresh:
             merged = dict(old_days); merged.update(fresh[aid]["days"])
             fresh[aid]["days"] = merged
@@ -1418,7 +1463,13 @@ def _graph_all(edge, fields, extra=None):
         url = "%s/act_%s/%s?%s" % (GRAPH_API, acct, edge, urllib.parse.urlencode(params))
         try:
             while url:
-                payload = http_json(url)
+                try:
+                    payload = http_json(url)
+                except urllib.error.HTTPError as he:
+                    try: body = he.read().decode("utf-8", "replace")[:300]
+                    except Exception: body = ""
+                    print("  graph %s HTTP %s: %s" % (edge, he.code, body))
+                    raise
                 out += payload.get("data", [])
                 url = (payload.get("paging") or {}).get("next")
         except Exception as e:
@@ -2083,6 +2134,20 @@ def main():
             for d, v in days.items():
                 lead_leads[m][d] = lead_leads[m].get(d, 0) + int(v.get("l", 0))
 
+    # дні, яких Meta цього разу не віддала (ліміт запитів, кеш ще не заповнений) — зі старого data.json
+    if DAILY_MISSING:
+        kept_d = 0
+        for m, n in cur["managers"].items():
+            if m not in lead_spend:
+                continue
+            ds = n.get("dates") or []; sp = n.get("spend") or []; ld = n.get("leads") or []
+            for i, d in enumerate(ds):
+                if d in DAILY_MISSING and i < len(sp):
+                    lead_spend[m][d] = sp[i] or 0
+                    lead_leads[m][d] = ld[i] if i < len(ld) else 0
+                    kept_d += 1
+        print("  денні ряди: %d днів (%d днів-менеджерів) взято зі старого data.json" % (len(DAILY_MISSING), kept_d))
+
     # ЗАПОБІЖНИК: якщо Meta не віддала ЖОДНИХ витрат (22–24.08.2026: graph впав на
     # «забагато даних», а у Windsor від'єднаний FB-акаунт) — не затираємо історію
     # нулями, а лишаємо денні ряди зі старого data.json. Записи/ад-сети/креативи
@@ -2504,6 +2569,10 @@ def main():
               % (x["acct"][-4:], x["name"][:40], x["m"], x["last"], x["sp7"]))
 
     compact = json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+    try:
+        save_daily_cache()
+    except Exception as e:
+        print("кеш денних даних не збережено:", str(e)[:120])
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         f.write(compact)
     print("updated", out["updated"], "| bytes", len(compact))
