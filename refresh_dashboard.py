@@ -409,17 +409,25 @@ def graph_rows(fields, dfrom, dto):
         return _graph_daily_chunked(fields, dfrom, dto)
     return _graph_once(fields, dfrom, dto)
 
-def _graph_daily_chunked(fields, dfrom, dto, span=14):
+def _graph_daily_chunked(fields, dfrom, dto, span=1):
     """Денний зріз вікнами по span днів; вікно, що впало на «забагато даних»,
-    ріжеться навпіл (до одного дня). Так довжина історії більше не впирається в ліміт."""
+    ріжеться навпіл (до одного дня). Так довжина історії більше не впирається в ліміт.
+
+    21.10.2026: Meta віддає spend = 0 у КОЖНОМУ рядку, якщо в запиті з time_increment=1
+    більше одного дня (на будь-якому рівні; ліди при цьому правильні). Запит за ОДИН день —
+    правильний. Тому span=1 і запити паралельно (8 потоків), щоб прогін не розтягувався."""
+    from concurrent.futures import ThreadPoolExecutor
     d1 = datetime.date.fromisoformat(dfrom); d2 = datetime.date.fromisoformat(dto)
-    out, win = [], []
+    win = []
     cur = d1
     while cur <= d2:
         end = min(cur + datetime.timedelta(days=span - 1), d2)
         win.append((cur, end)); cur = end + datetime.timedelta(days=1)
-    for a, b in win:
-        out += _graph_split(fields, a, b)
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        parts = list(ex.map(lambda w: _graph_split(fields, w[0], w[1]), win))
+    out = []
+    for p_ in parts:
+        out += p_
     return out
 
 def _graph_split(fields, a, b):
@@ -436,22 +444,6 @@ def _graph_split(fields, a, b):
 def _graph_once(fields, dfrom, dto):
     level = "ad" if "ad_id" in fields else ("adset" if "adset_id" in fields else "campaign")
     daily = "date" in fields
-    # 21.10.2026: Meta почала віддавати spend = 0 для level=campaign + time_increment=1
-    # (ліди в тих самих рядках правильні; сума без розбивки й рівень ад-сетів — правильні).
-    # Тому денний зріз кампаній беремо з ад-сетів і складаємо по (кампанія, день).
-    if daily and level == "campaign":
-        rows = _graph_once(list(fields) + ["adset_id", "adset_name"], dfrom, dto)
-        agg = {}
-        for r in rows:
-            k = (r.get("account_id"), r.get("campaign"), r.get("date"))
-            a = agg.setdefault(k, {"account_id": k[0], "campaign": k[1], "date": k[2],
-                                   "spend": 0.0, "impressions": 0.0, "clicks": 0.0,
-                                   "reach": 0.0, "actions_lead": 0,
-                                   "adset_id": None, "adset_name": None, "ad_id": None, "ad_name": None})
-            a["spend"] += num(r.get("spend")); a["impressions"] += num(r.get("impressions"))
-            a["clicks"] += num(r.get("clicks")); a["reach"] += num(r.get("reach"))
-            a["actions_lead"] += int(num(r.get("actions_lead")))
-        return list(agg.values())
     api_fields = ["campaign_name", "spend", "impressions", "clicks", "reach", "actions"]
     if level in ("adset", "ad"):
         api_fields += ["adset_id", "adset_name"]
