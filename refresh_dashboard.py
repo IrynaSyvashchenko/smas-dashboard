@@ -436,6 +436,22 @@ def _graph_split(fields, a, b):
 def _graph_once(fields, dfrom, dto):
     level = "ad" if "ad_id" in fields else ("adset" if "adset_id" in fields else "campaign")
     daily = "date" in fields
+    # 21.10.2026: Meta почала віддавати spend = 0 для level=campaign + time_increment=1
+    # (ліди в тих самих рядках правильні; сума без розбивки й рівень ад-сетів — правильні).
+    # Тому денний зріз кампаній беремо з ад-сетів і складаємо по (кампанія, день).
+    if daily and level == "campaign":
+        rows = _graph_once(list(fields) + ["adset_id", "adset_name"], dfrom, dto)
+        agg = {}
+        for r in rows:
+            k = (r.get("account_id"), r.get("campaign"), r.get("date"))
+            a = agg.setdefault(k, {"account_id": k[0], "campaign": k[1], "date": k[2],
+                                   "spend": 0.0, "impressions": 0.0, "clicks": 0.0,
+                                   "reach": 0.0, "actions_lead": 0,
+                                   "adset_id": None, "adset_name": None, "ad_id": None, "ad_name": None})
+            a["spend"] += num(r.get("spend")); a["impressions"] += num(r.get("impressions"))
+            a["clicks"] += num(r.get("clicks")); a["reach"] += num(r.get("reach"))
+            a["actions_lead"] += int(num(r.get("actions_lead")))
+        return list(agg.values())
     api_fields = ["campaign_name", "spend", "impressions", "clicks", "reach", "actions"]
     if level in ("adset", "ad"):
         api_fields += ["adset_id", "adset_name"]
