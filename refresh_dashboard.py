@@ -1160,6 +1160,7 @@ def fetch_raw_map(barca_camps=frozenset()):
     except Exception as e:
         print("  сира вкладка fb1 (Каріна) ->", str(e)[:60])
     # Новий кабінет (НВ): fb-вкладки таблиці «Лиды НВ» (fb1 = Saida Paris, fb2 = Minsk)
+    nb_seen = set()
     try:
         for t in list_tabs(NB_SS):
             if any(w in t.lower() for w in RAW_SKIP_WORDS):
@@ -1167,10 +1168,20 @@ def fetch_raw_map(barca_camps=frozenset()):
             if RAW_TAB_RE.search(t):
                 try:
                     _ingest(fetch_sheet_rows(ss=NB_SS, sheet=t), None, "nb:" + t)
+                    nb_seen.add(t)
                 except Exception as e:
                     print("  НВ сира вкладка", t, "->", str(e)[:60])
     except Exception as e:
         print("  таблиця НВ: список вкладок FAIL ->", str(e)[:80])
+    # 21.10.2026 адмін СХОВАЛА старі fb1/fb2 — список вкладок їх більше не віддає, і записи
+    # Саиди НВ / Мінська (вересень) перестали сідати на ад-сети. Читаємо їх напряму за gid.
+    for _gid, _t in (("690349092", "fb1"), ("861659997", "fb2")):
+        if _t in nb_seen:
+            continue
+        try:
+            _ingest(fetch_sheet_rows(ss=NB_SS, gid=_gid), None, "nb:" + _t)
+        except Exception as e:
+            print("  НВ прихована вкладка", _t, "->", str(e)[:60])
     raw_ok = [m for m, c in got.items() if c > 0]
     # Барселона (окрема таблиця, прив'язка тільки по кампаніях Ірини)
     try:
