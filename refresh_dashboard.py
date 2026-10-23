@@ -339,6 +339,8 @@ MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
 # Читаємо ОБИДВІ; дублікати (нова = копія старої) дедупляться по (телефон, час),
 # при дублі виграє рядок із записом (див. compute_bookings).
 NEW_SS = "14ExTAs7xK6Dsfe-UxUP-4r3wLJK8Wb0jcCP7PscVq5I"
+# сирі вкладки нової таблиці, які адмін ховає (htmlview їх не показує) — читаємо за назвою
+NEW_HIDDEN_RAW = ("fb1", "fb2", "fb3", "fb5", "fb8", "fbS", "fbMI", "fbTI")
 
 # Додаткові CRM-вкладки менеджера: рядок = назва вкладки в ГОЛОВНІЙ таблиці,
 # кортеж (ss, gid) = вкладка в іншій таблиці. Рядки доливаються до основної.
@@ -1165,9 +1167,14 @@ def fetch_raw_map(barca_camps=frozenset()):
             # для АД-СЕТ-атрибуції досить adset_id — не викидаємо рядок лише через брак ad_id
             if not ph or (not ad_id and not as_id):
                 continue
+            # той самий телефон у кількох формах -> прив'язка до НАЙСВІЖІШОГО ліда,
+            # а не до вкладки, прочитаної останньою (приховані вкладки читаються в кінці)
+            ct = str(r.get("created_time") or "")
+            if ct and ct < (raw_map.get(ph) or {}).get("ct", ""):
+                continue
             raw_map[ph] = {"m": mgr, "ad_id": ad_id, "adset_id": as_id,
                            "ad":    str(r.get("ad_name") or ""),
-                           "adset": str(r.get("adset_name") or "")}
+                           "adset": str(r.get("adset_name") or ""), "ct": ct}
             got[mgr] = got.get(mgr, 0) + 1
             n += 1
         print("  сира вкладка %-8s -> %d лідів з ID (останній %s)" % (tabname, n, _lastc or "?"))
@@ -1195,6 +1202,7 @@ def fetch_raw_map(barca_camps=frozenset()):
             print("  дод. вкладка", name, "->", str(e)[:60])
     # НОВА таблиця (з 05.09): її сирі fb-вкладки (fbS, fbMI, fbTI…) читаємо так само;
     # вони йдуть ПІСЛЯ старих, тож для того самого телефону виграє свіжіша прив'язка
+    new_seen = set()
     try:
         for t in list_tabs(NEW_SS):
             if any(w in t.lower() for w in RAW_SKIP_WORDS):
@@ -1202,10 +1210,29 @@ def fetch_raw_map(barca_camps=frozenset()):
             if RAW_TAB_RE.search(t):
                 try:
                     _ingest(fetch_sheet_rows(ss=NEW_SS, sheet=t), None, "new:" + t)
+                    new_seen.add(t)
                 except Exception as e:
                     print("  нова сира вкладка", t, "->", str(e)[:60])
     except Exception as e:
         print("  нова таблиця: список вкладок FAIL ->", str(e)[:80])
+    # 23.10.2026: адмін СХОВАЛА сирі вкладки й тут (fb5/fbTI — форма 02.08.26_Tanya_newParis,
+    # fb3 — Алиса, fb1/fbMI — Мага) -> htmlview їх не віддає, записи Тані перестали сідати
+    # на ад-сети (алерти «0 записів у CRM»). Читаємо за назвою; якщо на невідому назву
+    # прийде ПЕРША вкладка таблиці (так робить gviz) — такий «двійник» відкидаємо.
+    try:
+        _fallback = [r.get("id") for r in fetch_sheet_rows(ss=NEW_SS, sheet="__no_such_tab__")[:5]]
+    except Exception:
+        _fallback = None
+    for _t in NEW_HIDDEN_RAW:
+        if _t in new_seen:
+            continue
+        try:
+            _rows = fetch_sheet_rows(ss=NEW_SS, sheet=_t)
+            if _fallback is not None and [r.get("id") for r in _rows[:5]] == _fallback:
+                continue                      # такої вкладки нема — gviz підсунув першу
+            _ingest(_rows, None, "new:" + _t)
+        except Exception as e:
+            print("  нова прихована вкладка", _t, "->", str(e)[:60])
     # Даник (стара форма, 12–23.09) і Сюзанна (нова форма, з 24.09) — одна РК, різні вкладки
     for _gid, _tab, _mgr in (("130416952", "danik:fbD", "Даник"), ("1482232096", "danik:fb3", "Сюзанна")):
         try:
