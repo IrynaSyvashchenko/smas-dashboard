@@ -1267,6 +1267,21 @@ def fetch_raw_map(barca_camps=frozenset()):
             _ingest(fetch_sheet_rows(ss=NB_SS, gid=_gid), None, "nb:" + _t)
         except Exception as e:
             print("  НВ прихована вкладка", _t, "->", str(e)[:60])
+    # 23.10.2026 схована й fb3 (форма 14.10.26_Tanya_newParis_НВ) — gid невідомий, читаємо за назвою
+    try:
+        _nb_fb = [r.get("id") for r in fetch_sheet_rows(ss=NB_SS, sheet="__no_such_tab__")[:5]]
+    except Exception:
+        _nb_fb = None
+    for _t in ("fb3",):
+        if _t in nb_seen:
+            continue
+        try:
+            _rows = fetch_sheet_rows(ss=NB_SS, sheet=_t)
+            if _nb_fb is not None and [r.get("id") for r in _rows[:5]] == _nb_fb:
+                continue
+            _ingest(_rows, None, "nb:" + _t)
+        except Exception as e:
+            print("  НВ прихована вкладка", _t, "->", str(e)[:60])
     raw_ok = [m for m, c in got.items() if c > 0]
     # Барселона (окрема таблиця, прив'язка тільки по кампаніях Ірини)
     try:
