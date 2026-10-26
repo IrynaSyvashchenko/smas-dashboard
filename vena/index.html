@@ -63,6 +63,16 @@ tr:hover td{background:var(--card2)}
 .alert.warn{border-left-color:var(--warn)}
 .alert.ok{border-left-color:var(--good);color:var(--mut)}
 .foot{color:var(--mut);font-size:.75rem;margin-top:24px;text-align:center}
+/* бюджет біля ад-сету + розкриття креативів під ад-сетом (Ірина, 26.10) */
+.bud{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:8px;font-size:.72rem;background:var(--card2);border:1px solid var(--border);color:var(--txt);white-space:nowrap}
+.xp{width:22px;height:22px;margin-right:8px;border-radius:6px;border:1px solid var(--acc);background:transparent;color:var(--acc);font-weight:700;font-size:.9rem;line-height:1;cursor:pointer;vertical-align:middle;font-family:inherit}
+.xp:hover,.xp.on{background:var(--acc);color:#fff}
+tr.sub>td{background:var(--bg);padding:4px 10px 14px 40px;text-align:left}
+tr.sub:hover>td{background:var(--bg)}
+tr.sub table{font-size:.78rem;background:var(--card2);border-radius:8px}
+tr.sub th{background:var(--card);font-size:.72rem}
+tr.sub tr:hover td{background:var(--card)}
+.rk{display:inline-block;margin:1px 0;white-space:nowrap}
 @media(max-width:600px){body{padding:10px}.big{font-size:1.3rem}}
 </style>
 </head>
@@ -96,7 +106,7 @@ tr:hover td{background:var(--card2)}
 <section class="stk">
 <div class="tabs sm" id="crTabs"></div>
 <div style="overflow-x:auto"><table id="crTable">
-<thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th><th>% бюдж.·7д</th><th>Вердикт</th></tr></thead>
+<thead><tr><th>Креатив · ад-сет</th><th>Витрати</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th><th>% бюдж.·7д</th><th>Оцінки Meta</th><th>Вердикт</th></tr></thead>
 <tbody></tbody></table></div>
 <div class="phint" id="crNote"></div>
 
@@ -545,10 +555,56 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
   // великий заголовок міста перед його менеджерами (Прага -> Париж -> Барселона)
   const cityRow=(city,colspan)=>`<tr class="city"><td colspan="${colspan}">📍 ${city}</td></tr>`;
 
+  // оцінки Meta по оголошенню (Ads Manager: «Оцінка якості / залученості / коефіцієнта конверсії»):
+  // порівняння з оголошеннями конкурентів на ту саму аудиторію; без ~500 показів Meta їх не дає
+  const RK={ABOVE_AVERAGE:['вище середнього','g'],AVERAGE:['середня',''],
+    BELOW_AVERAGE_35:['нижче (гірші 35%)','y'],BELOW_AVERAGE_20:['нижче (гірші 20%)','r'],BELOW_AVERAGE_10:['нижче (гірші 10%)','r']};
+  const rankCell=r=>{
+    if(!r) return '—';
+    const out=[['q','Якість'],['e','Залучення'],['c','Конверсія']].map(([k2,l])=>{const v=RK[r[k2]]; if(!v) return '';
+      return `<span class="tag rk ${v[1]}"${v[1]?'':' style="background:var(--card2);color:var(--mut)"'}>${l}: ${v[0]}</span>`;}).filter(Boolean);
+    return out.length?out.join('<br>'):'—';
+  };
+  const RK_NOTE='«Оцінки Meta» — ті самі, що в Ads Manager (якість, залучення, конверсія): порівняння з іншими оголошеннями на ту саму аудиторію. «—» = Meta ще не дала оцінку (замало показів, потрібно ~500) або дані ще не оновились. Це діагностика, ЧОМУ дорого, а не причина вимикати: вимикаємо лише за ціною запису. ';
+
   // ---- ад-сети (по періодах) ----
   const asb=document.querySelector('#asTable tbody');
   const pct=(n,d)=>d?Math.round(n/d*100):null;
+  // бюджет/день — з того самого знімка Meta, що й блок «Масштабування» (лише активні ад-сети)
+  const budMap=new Map((Array.isArray(D.scaling)?D.scaling:[]).map(s=>[s.m+'|'+(s.campaign||'')+'|'+s.adset,s]));
+  const budTag=a=>{const s=budMap.get(a.m+'|'+(a.campaign||'')+'|'+a.adset);
+    if(!s||s.budget==null) return '';
+    return `<span class="bud" title="Денний бюджет зараз${s.lvl==='campaign'?' (на рівні кампанії, CBO)':''}">💵 ${fmt(s.budget,s.budget%1?2:0)}/день${s.lvl==='campaign'?' · CBO':''}</span>`;};
+  // «+» біля ад-сету: креативи цього ад-сету за той самий період — без гортання вниз
+  const asOpen=new Set();
+  let asCurK='yest';
+  const asKey=a=>a.m+'|'+(a.campaign||'')+'|'+a.adset;
+  const subCreatives=(a,k)=>{
+    const rows=(CR[k]||[]).filter(c=>c.m===a.m&&c.adset===a.adset&&(!c.campaign||!a.campaign||c.campaign===a.campaign))
+      .sort((x,y)=>((x.act===false)-(y.act===false))||(y.spend||0)-(x.spend||0));
+    if(!rows.length) return `<span style="color:var(--mut)">Немає креативів із витратами за цей період.</span>`;
+    const tot=rows.reduce((s,c)=>s+(c.spend||0),0), ii=isInst(a.m);
+    const tr=rows.map(c=>{
+      const ia=c.act===false, noBk=c.book==null, ct2=cpaT(c.m);
+      const cls=noBk?'':(c.cpa==null?'r':(c.cpa<ct2[0]?'g':c.cpa<ct2[1]?'y':'r'));
+      const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<ct2[0]?'топ':c.cpa<ct2[1]?'норма':'дорого'));
+      const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
+      const v=(ii||ia)?null:crVerdict(c);
+      return `<tr${ia?' class="inact"':''}><td>${c.name}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}</td>
+        <td>${fmt(c.spend)}</td><td>${tot?Math.round((c.spend||0)/tot*100)+'%':'—'}</td>
+        <td>${ii?'—':c.leads}</td><td>${ii?'—':fmt(c.cpl)}</td>
+        <td>${c.ctr!=null?c.ctr+'%':'—'}</td>
+        <td>${c.freq!=null?`<span class="tag ${fcls}">${c.freq}</span>`:'—'}</td>
+        <td>${ii?'—':noBk?'—*':c.book}</td>
+        <td>${ii||!c.leads?'—':noBk?'—*':(c.cpa!=null?`${fmt(c.cpa)} `:'')+`<span class="tag ${cls}">${st}</span>`}</td>
+        <td style="text-align:left">${rankCell(c.rank)}</td>
+        <td>${v?`<span class="tag ${v[1]}"${v[1]?'':' style="background:var(--card2);color:var(--mut)"'}>${v[0]}</span>`:'—'}</td></tr>`;}).join('');
+    return `<table><thead><tr><th>Креатив</th><th>Витрати</th><th>% бюджету</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th><th style="text-align:left">Оцінки Meta</th><th>Вердикт</th></tr></thead><tbody>${tr}</tbody></table>`;
+  };
+  asb.addEventListener('click',e=>{const b=e.target.closest('.xp'); if(!b) return;
+    const k2=b.dataset.k; asOpen.has(k2)?asOpen.delete(k2):asOpen.add(k2); renderAdsets(asCurK);});
   function renderAdsets(k){
+    asCurK=k;
     const p=P[k], list=AS[k]||[];
     document.getElementById('asTitle').textContent=`Ад-сети (аудиторія · гео) — ${p.label} · ${p.range}`;
     asb.innerHTML='';
@@ -563,8 +619,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         const bR=q?pct(q.bad,q.leads):null, nR=q?pct(q.noresp,q.leads):null;
         const bcls=bR==null?'':(bR>=20?'r':bR>=10?'y':'g');
         const ncls=nR==null?'':(nR>=40?'r':nR>=25?'y':'g');
+        const ak=asKey(a), open=asOpen.has(ak);
         asb.insertAdjacentHTML('beforeend',`<tr${ia?' class="inact"':''}>
-          <td>${a.adset}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
+          <td><button class="xp${open?' on':''}" data-k="${ak.replace(/"/g,'&quot;')}" title="${open?'Сховати':'Показати'} креативи цього ад-сету">${open?'−':'+'}</button>${a.adset}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':budTag(a)}<br><span style="color:var(--mut);font-size:.72rem;margin-left:30px">${a.campaign}</span></td>
           <td>${fmt(a.spend)}</td><td>${ii?'—':a.leads}</td><td>${ii?'—':fmt(a.cpl)}</td>
           <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
           <td>${a.freq!=null?`<span class="tag ${fcls}">${a.freq}</span>`:'—'}</td>
@@ -572,6 +629,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
           <td>${ii?'—':nR==null?'—*':`<span class="tag ${ncls}">${q.noresp} · ${nR}%</span>`}</td>
           <td>${ii?'—':a.book==null?'—*':a.book}</td>
           <td>${ii?'—':a.book==null?'—*':fmt(a.cpa)}</td></tr>`);
+        if(open) asb.insertAdjacentHTML('beforeend',`<tr class="sub"><td colspan="10">${subCreatives(a,k)}</td></tr>`);
       }
     }
     const notes=[];
@@ -590,6 +648,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
        if(s<c*0.6) bad.push(`${nm} (${s} з ${c})`); }
      if(bad.length) notes.push(`⚠️ У цих менеджерів записи НЕ прив'язуються до ад-сетів: ${bad.join(', ')} — їхня «сира» вкладка з ad_id застаріла, ліди пишуться в нову. Числа на картках правильні, а розбивка по ад-сетах і CPA для них неповні (тому 💰-алерти для них вимкнено). Скажи Клоду — підключить нову вкладку. `);}
     if(list.some(a=>a.act===false)) notes.push('Сірі рядки з позначкою «вимкнений» — ад-сети, які вже не крутяться: показані для порівняння, в кінці. ');
+    notes.push('«+» біля ад-сету — його креативи за цей самий період; «% бюджету» = частка витрат ад-сету. 💵 — денний бюджет зараз (з Meta, на момент оновлення). '+RK_NOTE);
     document.getElementById('asNote').textContent=notes.join('');
   }
 
@@ -625,8 +684,8 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     let crCity='';
     for(const [mgr,rows] of groupByMgr(cr)){
       const ct=M[mgr]?.city||'';
-      if(ct&&ct!==crCity){crb.insertAdjacentHTML('beforeend',cityRow(ct,10));crCity=ct;}
-      crb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,10));
+      if(ct&&ct!==crCity){crb.insertAdjacentHTML('beforeend',cityRow(ct,11));crCity=ct;}
+      crb.insertAdjacentHTML('beforeend',grpRow(mgr,rows,11));
       for(const c of [...rows].sort((x,y)=>((x.act===false)-(y.act===false))||((x.cpa??1e9)-(y.cpa??1e9)))){
         const ii=isInst(c.m), ia=(c.act===false);   // ia = вже не крутиться -> сірий рядок
         const noBk=(c.book==null);
@@ -645,6 +704,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
           <td>${ii?'—':noBk?'—*':c.book}</td>
           <td>${ii?'—':noBk?'—*':`${fmt(c.cpa)} <span class="tag ${cls}">${st}</span>`}</td>
           <td>${sh!=null?Math.round(sh*100)+'%':'—'}</td>
+          <td style="text-align:left">${rankCell(c.rank)}</td>
           <td>${vcell}</td></tr>`);
       }
     }
@@ -658,6 +718,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
       notes.push(`* Записи/CPA по креативах ще недоступні для: ${miss} — їхні сирі вкладки не прочитались. Підтягнеться саме. `);
     }
     notes.push('ВЕРДИКТ судить креатив правильними періодами незалежно від обраної вкладки: CPL/CTR/частота — за 7 днів (швидкі сигнали), CPA і записи — за ПОТОЧНИЙ + ПОПЕРЕДНІЙ місяць (запис доганяє лід 1–5 днів, тому 7-денна CPA завжди виглядає гіршою, ніж є). «Тест» = ще мало даних (<$30 і <3 записів) — не суди і не вимикай. «% бюдж.·7д» = частка витрат свого ад-сета за 7 днів: видно, куди Meta ллє бюджет; «⚠️ бюджет не туди» = креатив їсть ≥60% бюджету, а запис у нього ≥30% дорожчий за сусіда. ');
+    notes.push(RK_NOTE);
     notes.push('Пороги CPA: Стомат Київ (чек $956) — топ <$25, норма до $40; Відень (чек 149 €) — топ <$15, норма до $25; СМАС Київ і Тернопіль (чек 2 499 грн) — топ <$10, норма до $18.');
     document.getElementById('crNote').textContent=notes.join('');
   }
