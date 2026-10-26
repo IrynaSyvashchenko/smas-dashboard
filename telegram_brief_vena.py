@@ -2,9 +2,9 @@
 """Вечірній Telegram-бриф по кабінету ad5: Стомат Київ + Стомат Квіз, СМАС Відень/Київ/Тернопіль.
 
 Запускається з GitHub Actions після кожного «Refresh vena dashboard (ad5)»
-(workflow_run), але шле ЛИШЕ після вечірнього оновлення (година updated 21..23
-за Києвом, фактично ~23:00) — разом зі SMAS-брифом. Кабінет живе за Києвом
-(UTC+3), тож звітуємо «за сьогодні» станом на ~23:00 (без останньої години
+(workflow_run), але шле ЛИШЕ раз на день — після першого вечірнього оновлення (з 22:00
+за Києвом) — разом зі SMAS-брифом. Кабінет живе за Києвом, тож звітуємо
+«за сьогодні» станом на ~22–23:00 (без останньої години
 дня — різниця мізерна). Ручний запуск (workflow_dispatch) шле завжди.
 
 Дані вже пораховані дашбордом (vena/data.json) — тут нічого не тягнеться з Meta.
@@ -12,11 +12,30 @@
 """
 import math
 import os, json, time, datetime, urllib.request, urllib.parse, sys
+from zoneinfo import ZoneInfo
 
 CHAT_ID  = "901823018"
 TOKEN    = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 DATA_URL = "https://raw.githubusercontent.com/IrynaSyvashchenko/smas-dashboard/main/vena/data.json"
 DASH_URL = "https://irynasyvashchenko.github.io/smas-dashboard/vena/"
+# дата останнього відправленого брифа (workflow комітить файл) — раз на день, а не
+# після кожного вечірнього оновлення (було по 2–4 на вечір, Ірина 27.10)
+SENT_FILE = "brief_sent_vena.txt"
+
+def local_dt(upd):
+    """Час оновлення за КИЄВОМ з урахуванням літнього/зимового часу (фіксований +3
+    після 25.10 зсував добу на годину)."""
+    dt = datetime.datetime.fromisoformat(upd)
+    try:
+        return dt.astimezone(ZoneInfo("Europe/Kyiv"))
+    except Exception:
+        return dt
+
+def sent_day():
+    try:
+        return open(SENT_FILE, encoding="utf-8").read().strip()
+    except OSError:
+        return ""
 
 def _get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "vena-brief", "Cache-Control": "no-cache"})
@@ -39,7 +58,7 @@ def build(d, use_today=True):
 
     # Звітний день: увечері = сьогодні (день, що закривається, дані до ~23:00);
     # вранішнє надолуження / ручний ранковий запуск = учора (повний день).
-    today = datetime.date.fromisoformat(upd[:10])
+    today = local_dt(upd).date()
     rday  = today if use_today else today - datetime.timedelta(days=1)
     rs    = rday.isoformat()
 
@@ -200,16 +219,29 @@ def main():
         sys.exit("ERROR: TELEGRAM_BOT_TOKEN не заданий (додай секрет у GitHub Actions)")
     d = json.loads(_get(DATA_URL + "?cb=%d" % int(time.time())).decode("utf-8"))
     manual = os.environ.get("GITHUB_EVENT_NAME", "") == "workflow_dispatch"
-    upd = d.get("updated", "")
-    hour = int(upd[11:13]) if len(upd) >= 13 else -1
-    # шлемо після ВЕЧІРНЬОГО оновлення (~22:00-23:59 за Києвом), коли день майже закритий;
-    # решту запусків пропускаємо. Ручний запуск: після обіду звітуємо «сьогодні», зранку — «вчора».
-    if not manual and not (21 <= hour <= 23):
-        print("skip: not the evening refresh (updated hour=%d)" % hour)
-        return
-    text = token_warn(d) + adsquiz_warn(d) + datacheck_warn(d) + build(d, use_today=(hour >= 12))
+    lt = local_dt(d.get("updated", ""))
+    # РАЗ НА ДЕНЬ: перше оновлення з 22:00 за Києвом (= 21:00 Праги, разом зі SMAS-брифом)
+    # -> «за сьогодні»; оновлення, завезене за північ (00..03), надолужує «за вчора», якщо
+    # той бриф ще не йшов. Ручний запуск: після обіду «сьогодні», зранку «вчора», не мітить.
+    if lt.hour >= 22:
+        day, use_today = lt.date(), True
+    elif lt.hour < 4:
+        day, use_today = lt.date() - datetime.timedelta(days=1), False
+    else:
+        day, use_today = None, lt.hour >= 12
+    if not manual:
+        if day is None:
+            print("skip: not the evening refresh (Kyiv %s)" % lt.strftime("%H:%M"))
+            return
+        if sent_day() == day.isoformat():
+            print("skip: brief for %s already sent" % day)
+            return
+    text = token_warn(d) + adsquiz_warn(d) + datacheck_warn(d) + build(d, use_today=use_today)
     send(text)
     print("sent, %d chars" % len(text))
+    if not manual:
+        with open(SENT_FILE, "w", encoding="utf-8") as f:
+            f.write(day.isoformat() + "\n")
 
 if __name__ == "__main__":
     main()

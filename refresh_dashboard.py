@@ -21,6 +21,20 @@ Env vars (GitHub Actions secrets):
 Reads/writes ./data.json.
 """
 import os, re, json, time, datetime, urllib.request, urllib.parse, urllib.error, sys, html
+from zoneinfo import ZoneInfo
+
+def _eu_zone(name, std_hours):
+    """Справжній пояс (літній/зимовий час). На раннері є системна база zoneinfo; якщо
+    її нема (Windows без tzdata) — фіксований зсув за правилом ЄС на поточну дату."""
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        def _last_sun(month):
+            d = datetime.datetime(now.year, month, 31, 1, tzinfo=datetime.timezone.utc)
+            return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+        dst = _last_sun(3) <= now < _last_sun(10)
+        return datetime.timezone(datetime.timedelta(hours=std_hours + (1 if dst else 0)))
 
 API_KEY    = os.environ.get("WINDSOR_API_KEY", "").strip()
 def _clean_secret(name):
@@ -71,9 +85,10 @@ CAMP_MOVE   = {"13.07.26_Paris_Maga":   [("Мага", "0000"), ("Сюзанна"
                # кабінет НВ: РК Саиды з 15.10 веде Таня (окрема картка лід-форм)
                "16.09_Saida_Paris":     ("Саида НВ", "Таня НВ форми", "2026-10-15")}
 DATE_FROM = "2026-06-20"
-TODAY     = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=2))).date().isoformat()  # празька дата, щоб «Сьогодні» збігалося з «Оновлено» навіть уночі
+# справжній пояс Праги (літо +2 / зима +1): фіксований +2 після 25.10 зсував «сьогодні» на годину
+TZ        = _eu_zone("Europe/Prague", 1)
+TODAY     = datetime.datetime.now(TZ).date().isoformat()  # празька дата, щоб «Сьогодні» збігалося з «Оновлено» навіть уночі
 DATA_FILE = "data.json"
-TZ        = datetime.timezone(datetime.timedelta(hours=2))
 
 LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Alissa",
            "Саида": "Saida", "Даша": "Dasha",

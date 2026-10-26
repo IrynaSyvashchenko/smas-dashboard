@@ -14,6 +14,20 @@ Env vars (ті самі GitHub Secrets, що й у головного дашбо
   SHEETS_KEY   -> спільний секрет моста
 """
 import os, re, json, time, datetime, urllib.request, urllib.parse, urllib.error
+from zoneinfo import ZoneInfo
+
+def _eu_zone(name, std_hours):
+    """Справжній пояс (літній/зимовий час). На раннері є системна база zoneinfo; якщо
+    її нема (Windows без tzdata) — фіксований зсув за правилом ЄС на поточну дату."""
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        def _last_sun(month):
+            d = datetime.datetime(now.year, month, 31, 1, tzinfo=datetime.timezone.utc)
+            return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+        dst = _last_sun(3) <= now < _last_sun(10)
+        return datetime.timezone(datetime.timedelta(hours=std_hours + (1 if dst else 0)))
 
 def _clean_secret(name):
     v = os.environ.get(name, "").strip()
@@ -31,7 +45,7 @@ META_TOKEN = _clean_secret("META_TOKEN_VENA") or _clean_secret("META_TOKEN")
 GRAPH_API  = "https://graph.facebook.com/v21.0"
 ACCOUNT    = "1483053046124984"          # кабінет ad5 (Анна Олеговна)
 DATE_FROM  = "2026-08-15"                # старт Ірини в цьому кабінеті
-TZ         = datetime.timezone(datetime.timedelta(hours=3))   # Київ (EEST)
+TZ         = _eu_zone("Europe/Kyiv", 2)   # Київ: літо +3 / зима +2 (фіксований +3 після 25.10 зсував добу)
 TODAY      = datetime.datetime.now(TZ).date().isoformat()
 DATA_FILE  = "vena/data.json"
 

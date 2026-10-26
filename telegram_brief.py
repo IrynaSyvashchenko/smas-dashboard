@@ -3,18 +3,37 @@
 
 Запускається з GitHub Actions ОДРАЗУ ПІСЛЯ оновлення даних (workflow_run після
 «Refresh dashboard data») — у хмарі, незалежно від комп'ютера Ірини. Шле лише після
-ВЕЧІРНЬОГО оновлення (година updated >= 21), коли дані за день готові; після денних
-оновлень main() тихо виходить. Читає свіжий data.json з raw.githubusercontent (main),
+ВЕЧІРНЬОГО оновлення (з 21:00 за Прагою), коли дані за день готові, і лише РАЗ на
+день (brief_sent_smas.txt); після денних оновлень main() тихо виходить. Читає свіжий data.json з raw.githubusercontent (main),
 збирає короткий звіт за день і шле в Telegram через Bot API.
 
 Дані вже пораховані дашбордом — тут нічого не тягнеться з Meta.
 Секрет (GitHub Actions): TELEGRAM_BOT_TOKEN — токен бота @ad_smas_lifting_bot.
 """
 import os, json, time, datetime, urllib.request, urllib.parse, sys
+from zoneinfo import ZoneInfo
 
 CHAT_ID  = "901823018"
 TOKEN    = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 DATA_URL = "https://raw.githubusercontent.com/IrynaSyvashchenko/smas-dashboard/main/data.json"
+# дата останнього відправленого брифа — файл у репо, workflow комітить його після відправки.
+# Без цього кожне вечірнє оновлення слало свій бриф (по 2–4 на вечір, Ірина 27.10)
+SENT_FILE = "brief_sent_smas.txt"
+
+def local_dt(upd):
+    """Час оновлення за ПРАГОЮ з урахуванням літнього/зимового часу. До 27.10 тут бралась
+    година з рядка з фіксованим +2 — після 25.10 вікно 21..22 пропускалось і бриф мовчав."""
+    dt = datetime.datetime.fromisoformat(upd)
+    try:
+        return dt.astimezone(ZoneInfo("Europe/Prague"))
+    except Exception:
+        return dt
+
+def sent_day():
+    try:
+        return open(SENT_FILE, encoding="utf-8").read().strip()
+    except OSError:
+        return ""
 
 def _get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "smas-brief", "Cache-Control": "no-cache"})
@@ -48,8 +67,9 @@ def build(d):
 
     # звітний день: увечері (година updated >= 21) = день, що тільки-но закрився;
     # інакше (вранішнє надолуження) = попередній повний день.
-    hour  = int(upd[11:13])
-    ud    = datetime.date.fromisoformat(upd[:10])
+    lt    = local_dt(upd)
+    hour  = lt.hour
+    ud    = lt.date()
     today = ud
     if hour >= 21:
         rday, use1d = ud, True
@@ -187,21 +207,31 @@ def main():
     if not TOKEN:
         sys.exit("ERROR: TELEGRAM_BOT_TOKEN не заданий (додай секрет у GitHub Actions)")
     d = json.loads(_get(DATA_URL + "?cb=%d" % int(time.time())).decode("utf-8"))
-    # Бриф триггериться після КОЖНОГО оновлення даних (workflow_run), але шлемо лише
-    # після ВЕЧІРНЬОГО (коли дані за день готові) — або коли запущено вручну.
+    # Бриф триггериться після КОЖНОГО оновлення даних (workflow_run), а шлемо РАЗ НА ДЕНЬ:
+    # перше оновлення з 21:00 за Прагою -> бриф «за сьогодні»; якщо планувальник GitHub
+    # завіз вечірнє оновлення за північ (00..03) і бриф за вчора ще не йшов — надолужуємо
+    # «за вчора». День відправки пишемо в SENT_FILE. Ручний запуск шле завжди й не мітить.
     manual = os.environ.get("GITHUB_EVENT_NAME", "") == "workflow_dispatch"
-    upd = d.get("updated", "")
-    hour = int(upd[11:13]) if len(upd) >= 13 else 0
-    # Ірина хоче бриф ДО 23:00 (05.09). Планувальник GitHub возить крони з лагом
-    # 0–2.5 год, тому у refresh.yml ДВА вечірні слоти (18:25Z і 20:25Z), а шлемо
-    # ЛИШЕ коли дані приїхали у вікно 21..22 за Прагою — за будь-якого лагу
-    # кваліфікується рівно один запуск (без дублів), бриф приходить ~21:30–23:00.
-    if not manual and hour not in (21, 22):
-        print("skip: outside evening window 21..22 (updated hour=%d)" % hour)
-        return
+    lt = local_dt(d.get("updated", ""))
+    if lt.hour >= 21:
+        day = lt.date()
+    elif lt.hour < 4:
+        day = lt.date() - datetime.timedelta(days=1)
+    else:
+        day = None
+    if not manual:
+        if day is None:
+            print("skip: not the evening refresh (Prague %s)" % lt.strftime("%H:%M"))
+            return
+        if sent_day() == day.isoformat():
+            print("skip: brief for %s already sent" % day)
+            return
     text = token_warn(d) + build(d)
     send(text)
     print("sent, %d chars" % len(text))
+    if not manual:
+        with open(SENT_FILE, "w", encoding="utf-8") as f:
+            f.write(day.isoformat() + "\n")
 
 if __name__ == "__main__":
     main()
