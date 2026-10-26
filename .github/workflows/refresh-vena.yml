@@ -51,7 +51,11 @@ jobs:
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add vena/data.json
             git commit -m "auto: vena data refresh $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
+            # у main комітять ще головний refresh і телеграм-брифи — без rebase push падає «fetch first»
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              echo "push retry $i"; sleep 5
+            done
           else
             echo "vena/data.json unchanged"
           fi

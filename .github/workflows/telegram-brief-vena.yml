@@ -4,6 +4,14 @@ on:
   workflow_run:
     workflows: ["Refresh vena dashboard (ad5)"]
     types: [completed]
+
+permissions:
+  contents: write              # комітимо brief_sent_vena.txt — бриф раз на день
+
+concurrency:                   # по черзі: наступний запуск бачить мітку попереднього
+  group: telegram-brief-vena
+  cancel-in-progress: false
+
 jobs:
   brief:
     runs-on: ubuntu-latest
@@ -18,3 +26,15 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python telegram_brief_vena.py
+      - name: Remember sent day
+        run: |
+          if [ -n "$(git status --porcelain brief_sent_vena.txt)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add brief_sent_vena.txt
+            git commit -m "auto: telegram brief vena sent $(cat brief_sent_vena.txt)"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break
+              echo "push retry $i"; sleep 5
+            done
+          fi
