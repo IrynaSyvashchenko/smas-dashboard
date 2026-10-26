@@ -685,6 +685,28 @@ def build_adsets(periods, bk, raw_map):
         print("  ад-сети [%-6s]: %d рядків" % (key, len(res)))
     return out
 
+RANK_FIELDS = ("quality_ranking", "engagement_rate_ranking", "conversion_rate_ranking")
+
+def fetch_rankings(dfrom, dto):
+    """Оцінки Meta по оголошеннях (якість / залученість / конверсія) за період.
+    Окремий запит: якщо Meta їх не віддасть, креативи рахуються як раніше."""
+    if not META_TOKEN:
+        return {}
+    params = {"level": "ad", "fields": "ad_id," + ",".join(RANK_FIELDS),
+              "time_range": json.dumps({"since": dfrom, "until": dto}),
+              "limit": "500", "access_token": META_TOKEN}
+    url = "%s/act_%s/insights?%s" % (GRAPH_API, ACCOUNT, urllib.parse.urlencode(params))
+    out = {}
+    while url:
+        payload = http_json(url)
+        for r in payload.get("data", []):
+            rk = {f[0]: r.get(f) for f in RANK_FIELDS
+                  if r.get(f) and r.get(f) != "UNKNOWN"}   # q / e / c
+            if rk and r.get("ad_id"):
+                out[str(r["ad_id"])] = rk
+        url = (payload.get("paging") or {}).get("next")
+    return out
+
 def build_creatives(periods, bk, raw_map):
     live = ({str(x.get("id")) for x in _graph_all("ads", "id,effective_status")
              if x.get("effective_status") == "ACTIVE"} if META_TOKEN else None)
@@ -739,6 +761,11 @@ def build_creatives(periods, bk, raw_map):
                 aid_h = hit["ad_id"] or (_quiz_ad(hit, L["cd"]) if hit.get("quiz") else None)
                 if aid_h:
                     bmap[aid_h] = bmap.get(aid_h, 0) + 1
+        try:
+            ranks = fetch_rankings(dfrom, dto)
+        except Exception as e:
+            ranks = {}
+            print("  rankings period FAIL", key, "->", str(e)[:120])
         res = []
         for aid, a in agg.items():
             sp = round(a["spend"], 2); ld = a["leads"]
@@ -751,7 +778,8 @@ def build_creatives(periods, bk, raw_map):
                         "book": book,
                         "cpa": round(sp / book, 2) if book else None,
                         "conv": round(book / ld * 100, 1) if (book is not None and ld) else None,
-                        "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"]})
+                        "ctr": rm["ctr"], "freq": rm["freq"], "cpm": rm["cpm"],
+                        "rank": ranks.get(aid)})
         res.sort(key=lambda c: (not c["act"], c["cpa"] if c["cpa"] is not None else 1e9))
         out[key] = res
         print("  creatives [%-6s]: %d рядків" % (key, len(res)))
