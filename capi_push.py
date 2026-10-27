@@ -37,9 +37,10 @@ DRY_RUN   = os.environ.get("CAPI_DRY_RUN", "").strip() == "1"
 
 # Менеджери кабінету 1 (873265084670144) — набір даних підключено до нього.
 # НВ (інший кабінет), Барселона, Вика та інста-картки сюди не входять.
-CAB1 = ("Алиса", "Таня", "Сюзанна", "Карина", "Саида", "Даша", "Диана", "Мага", "Даник")
+CAB1 = ("Алиса", "Таня", "Сюзанна", "Карина", "Катя", "Саида", "Даша", "Диана", "Мага", "Даник")
 # РК переходили між цими менеджерами (rd.CAMP_MOVE) — статус ліда шукаємо в CRM усієї групи
 MOVE_GROUP = ("Мага", "Даник", "Сюзанна", "Таня", "Алиса")   # 23.10 РК Сюзанни -> Таня / Алиса
+KATYA_GROUP = ("Карина", "Катя")   # 28.10 РК Каріни -> Катя; її ліди поки у вкладці «Карина Ирина»
 
 
 def lead_id(v):
@@ -123,7 +124,7 @@ def crm_statuses(mgrs):
 
 
 def stage_of(mgr, phone, status):
-    group = MOVE_GROUP if mgr in MOVE_GROUP else (mgr,)
+    group = next((g for g in (MOVE_GROUP, KATYA_GROUP) if mgr in g), (mgr,))
     found = [s for s in (status.get(m, {}).get(phone) for m in group) if s]
     return max(found, key=RANK.get) if found else None
 
@@ -189,7 +190,7 @@ def build_events(now):
     fresh_rule = {"lost": sent.get("_lost_rules") == LOST_RULES,
                   "booked_other": sent.get("_other_rules") == OTHER_RULES}
     leads, skip = raw_leads(now)
-    status = crm_statuses(sorted({x["m"] for x in leads.values()} | set(MOVE_GROUP)))
+    status = crm_statuses(sorted({x["m"] for x in leads.values()} | set(MOVE_GROUP) | set(KATYA_GROUP)))
     known_only = []          # (lead_id, етап) — позначити без відправки
     events, stats = [], {}
     for lid, x in sorted(leads.items(), key=lambda kv: kv[1]["created"]):

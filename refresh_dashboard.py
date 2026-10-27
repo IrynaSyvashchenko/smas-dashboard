@@ -83,7 +83,11 @@ CAMP_MOVE   = {"13.07.26_Paris_Maga":   [("Мага", "0000"), ("Сюзанна"
                "9.07.26 Alissa":        ("Саида", "Алиса", "2026-10-15"),
                "9.07.26 Saida":         ("Саида", "Алиса", "2026-10-15"),
                # кабінет НВ: РК Саиды з 15.10 веде Таня (окрема картка лід-форм)
-               "16.09_Saida_Paris":     ("Саида НВ", "Таня НВ форми", "2026-10-15")}
+               "16.09_Saida_Paris":     ("Саида НВ", "Таня НВ форми", "2026-10-15"),
+               # 27.10 Каріна пішла, РК «18.09.26_Paris_Karina» перейменована на «…_Катя»:
+               # Каріні — по 27.10 включно, Каті — з 28.10 (Ірина)
+               "18.09.26_Paris_Karina": ("Карина", "Катя", "2026-10-28"),
+               "18.09.26_Paris_Катя":   ("Карина", "Катя", "2026-10-28")}
 DATE_FROM = "2026-06-20"
 # справжній пояс Праги (літо +2 / зима +1): фіксований +2 після 25.10 зсував «сьогодні» на годину
 TZ        = _eu_zone("Europe/Prague", 1)
@@ -103,7 +107,9 @@ LEAD_KW = {"Диана": "Prague_Diana", "Таня": "Tanya", "Алиса": "Ali
            # 24.09 форму замінено на «12.09.26_newParis_Сьюзанна», картку перейменовано
            "Сюзанна": ("Danik", "Данік", "Даник", "Сьюзанна", "Сюзанна", "Suzanna"),
            # Каріна (Париж, з 18.09): РК «18.09.26_Paris_Karina»
-           "Карина": ("Karina", "Каріна", "Карина")}
+           "Карина": ("Karina", "Каріна", "Карина"),
+           # Катя (Париж, з 28.10): та сама РК, перейменована на «18.09.26_Paris_Катя»
+           "Катя": ("Катя", "Katya", "Katia")}
 
 def camp_mgr(campaign, date, mgr):
     """Власник РК НА КОНКРЕТНУ ДАТУ. Повертає СТАРОГО менеджера до дати передачі
@@ -192,6 +198,7 @@ def _admin_mgr(name):
     if "сюзан" in n or "сьюзан" in n:  return "Сюзанна"
     if "даник" in n or "данік" in n:   return "Даник"
     if "карина" in n or "каріна" in n: return "Карина"
+    if "катя" in n or "катерин" in n or "katya" in n: return "Катя"
     if "женя" in n:                   return None        # Женя — до 16.09 не наш; РК передана Данику
     if "юлиана" in n or "барселона" in n: return "Юлиана"
     if "вика" in n or "вікa" in n or "vika" in n: return "Вика"   # «Лиды Прага Вика» — НЕ Даша (грабля: серпень рахувався Даші)
@@ -282,6 +289,7 @@ MANAGER_BOOTSTRAP = {"Юлиана": {"city": "Барселона", "start": "20
                      "Даник":  {"city": "Париж", "start": "2026-09-12"},
                      "Сюзанна": {"city": "Париж", "start": "2026-09-24"},
                      "Карина": {"city": "Париж", "start": "2026-09-18"},
+                     "Катя":   {"city": "Париж", "start": "2026-10-28"},
                      "Саида НВ": {"city": "Париж", "start": "2026-09-16"},
                      NB_INST_MGR: {"city": "Париж", "start": "2026-09-27"},
                      NB_FORM_TANYA: {"city": "Париж", "start": NB_FORM_SINCE},
@@ -296,7 +304,8 @@ MANAGER_OFF  = ("Вика",)
 MANAGER_HIDE = ("Юлиана", "Вика", INST_MGR_PARIS, INST_MGR_PRAGUE)   # Вика схована 17.09 (не працює)
 # Менеджер більше не працює: останній його день. Сайт ховає картку в періодах, що
 # почались після цієї дати (жовтень, 7 днів…), а у «вересні» і «весь час» вона лишається.
-MANAGER_END  = {"Мага": "2026-09-26", "Даник": "2026-09-23", "Сюзанна": "2026-10-22"}   # їхні РК веде Сюзанна (CAMP_MOVE)
+MANAGER_END  = {"Мага": "2026-09-26", "Даник": "2026-09-23", "Сюзанна": "2026-10-22",   # їхні РК веде Сюзанна (CAMP_MOVE)
+                "Карина": "2026-10-27"}   # її РК з 28.10 веде Катя
 
 # --- ROAS: середній чек (записи x чек / витрати; оцінка, бо запис != оплачена процедура) ---
 # Курси до USD (валюта кабінету) — константи, онови за потреби.
@@ -313,6 +322,7 @@ AVG_CHECK = {   # (сума, валюта). Париж/Барселона — ц
     "Даник":  (159, "EUR"),   # Париж, 12–23.09
     "Сюзанна": (159, "EUR"),  # Париж, з 24.09 (та сама РК, нова форма)
     "Карина": (159, "EUR"),   # Париж (з 18.09), офер 159€
+    "Катя":   (159, "EUR"),   # Париж (з 28.10), та сама РК Каріни
     "Саида НВ": (159, "EUR"), # новий кабінет, оффер 159€ (бордо/тіффані 16.09)
     NB_FORM_TANYA: (159, "EUR"),  # ті самі креативи Саиды (159€ / фото 199€)
     NB_INST_MGR: (159, "EUR"),# Instagram-РК: 2 креативи 159€ (моделі) + 1 фото 199€
@@ -356,6 +366,11 @@ MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
 NEW_SS = "14ExTAs7xK6Dsfe-UxUP-4r3wLJK8Wb0jcCP7PscVq5I"
 # сирі вкладки нової таблиці, які адмін ховає (htmlview їх не показує) — читаємо за назвою
 NEW_HIDDEN_RAW = ("fb1", "fb2", "fb3", "fb5", "fb8", "fbS", "fbMI", "fbTI")
+# Менеджер переймає CRM-вкладку попередника: (від кого, з дати ліда, вкладки-кандидати за назвою).
+# Ліди з цієї дати у вкладці попередника рахуються новому; власна вкладка (якщо адмін
+# її створить) доливається — поки її нема, gviz віддає першу вкладку, це відсікаємо.
+MANAGER_TAKEOVER = {"Катя": ("Карина", "2026-10-28",
+                             ((DANIK_SS, "Катя Ирина"), (NEW_SS, "Катя Ирина")))}
 
 # Додаткові CRM-вкладки менеджера: рядок = назва вкладки в ГОЛОВНІЙ таблиці,
 # кортеж (ss, gid) = вкладка в іншій таблиці. Рядки доливаються до основної.
@@ -1035,10 +1050,27 @@ def _print_mgr(mgr, v):
              qa["noresp"], 100.0 * qa["noresp"] / ql,
              liq,          100.0 * liq          / ql))
 
+def _takeover_rows(mgr):
+    """Власні CRM-вкладки менеджера з MANAGER_TAKEOVER, яких може ще не бути."""
+    out = []
+    for ss2, name in MANAGER_TAKEOVER[mgr][2]:
+        try:
+            first = [r.get("phone_number") for r in fetch_sheet_rows(ss=ss2, sheet="__no_such_tab__")[:5]]
+            add = fetch_sheet_rows(ss=ss2, sheet=name)
+            if [r.get("phone_number") for r in add[:5]] == first:
+                continue                      # вкладки нема — gviz підсунув першу
+            out += [_remap_new_row(dict(r)) for r in add]
+            print("  CRM-вкладка %s (%s): %d рядків" % (name, mgr, len(add)))
+        except Exception as e:
+            print("  CRM-вкладка %s (%s) ->" % (name, mgr), str(e)[:60])
+    return out
+
 def compute_bookings(barca_camps=frozenset()):
     """Return {manager: {bookings,bookings7d,bookings1d,leads_seen}} or None on total failure."""
     today = datetime.date.fromisoformat(TODAY)
     res = {}
+    taken = {MANAGER_TAKEOVER[m][0]: m for m in MANAGER_TAKEOVER}
+    split = {}                                # новий менеджер -> рядки з вкладки попередника
     for mgr, gid in MANAGER_GID.items():
         try:
             rows = fetch_sheet_rows(**_sheet_args(gid))
@@ -1062,10 +1094,20 @@ def compute_bookings(barca_camps=frozenset()):
         # той самий лід живе в СТАРІЙ і НОВІЙ таблицях; дедуп лишає ОСТАННІЙ рядок.
         # Щоб запис, проставлений у будь-якій з копій, не загубився — рядки з
         # позначкою запису докидаємо в кінець: при дублі виграє забукований.
+        if mgr in taken:                      # РК перейшла: свіжі ліди — наступнику
+            nm = taken[mgr]; since = MANAGER_TAKEOVER[nm][1]
+            split[nm] = [r for r in rows if str(r.get("created_time") or "")[:10] >= since]
+            rows = [r for r in rows if not str(r.get("created_time") or "")[:10] >= since]
         rows += [r for r in rows if is_booked(r)]
         res[mgr] = _tally_manager(rows, today,
                                   lambda r: r.get("phone_number"), _iryna_row)
         _print_mgr(mgr, res[mgr])
+    for nm, (_prev, since, _tabs) in MANAGER_TAKEOVER.items():
+        rows = split.get(nm, []) + [r for r in _takeover_rows(nm)
+                                    if str(r.get("created_time") or "")[:10] >= since]
+        rows += [r for r in rows if is_booked(r)]
+        res[nm] = _tally_manager(rows, today, lambda r: r.get("phone_number"), _iryna_row)
+        _print_mgr(nm, res[nm])
 
     # Барселона: ліди і записи Юліани = вкладка «Юлиана Ирина» (правило Ірини:
     # «де у моїй вкладці написано запис — то мій запис»). Без фільтрів по кампаніях.
