@@ -497,6 +497,12 @@ def _graph_daily_chunked(fields, dfrom, dto, span=1):
     for d in days:
         if d in cache:
             out += cache[d]
+            # дні з кешу не проходять через _graph_once, а NB_CAMPS наповнюється саме там:
+            # РК НВ, що крутилась лише в старіші дні, класифікувалась як чужа
+            # (27.10: «2.10_Instagram_повідомлення_Tanyа» $169 пішла в «Инста Париж» замість «Таня НВ»)
+            for r in cache[d]:
+                if str(r.get("account_id")) == NEW_ACCOUNT and r.get("campaign"):
+                    NB_CAMPS.add(str(r.get("campaign")))
         else:
             DAILY_MISSING.add(d)
     print("  graph поденно [%s]: запитано %d дн., з кешу %d, бракує %d%s"
