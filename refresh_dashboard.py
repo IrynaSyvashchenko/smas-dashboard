@@ -632,6 +632,9 @@ def classify(campaign):
         cl0 = _hg(c)
         if "minsk" in cl0 or "минск" in c.lower() or "мінськ" in c.lower():
             return ("lead", "Минск")
+        # лід-форми Тані в НВ (31.10 нова РК «31.10_Tanya_Paris») — не Instagram-картка «Таня НВ»
+        if "instagram" not in cl0 and _kw_in(("Tanya", "Таня"), c):
+            return ("lead", NB_FORM_TANYA)
         for m, kw in LEAD_KW.items():
             if _kw_in(kw if isinstance(kw, tuple) else (kw,), c):
                 return ("lead", camp_mgr(c, TODAY, m + NB_SUFFIX))   # РК могла перейти (CAMP_MOVE)
