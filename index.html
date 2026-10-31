@@ -69,6 +69,14 @@ tr:hover td{background:var(--card2)}
 .alert.warn{border-left-color:var(--warn)}
 .alert.ok{border-left-color:var(--good);color:var(--mut)}
 .foot{color:var(--mut);font-size:.75rem;margin-top:24px;text-align:center}
+/* розкриття креативів під ад-сетом — як у дашборді ad5 (Ірина, 30.10) */
+.xp{width:22px;height:22px;margin-right:8px;border-radius:6px;border:1px solid var(--acc);background:transparent;color:var(--acc);font-weight:700;font-size:.9rem;line-height:1;cursor:pointer;vertical-align:middle;font-family:inherit}
+.xp:hover,.xp.on{background:var(--acc);color:#fff}
+tr.sub>td{background:var(--bg);padding:4px 10px 14px 40px;text-align:left}
+tr.sub:hover>td{background:var(--bg)}
+tr.sub table{font-size:.78rem;background:var(--card2);border-radius:8px}
+tr.sub th{background:var(--card);font-size:.72rem}
+tr.sub tr:hover td{background:var(--card)}
 @media(max-width:600px){body{padding:10px}.big{font-size:1.3rem}}
 </style>
 </head>
@@ -486,7 +494,37 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
     return h+`<br>${tag}`;
   }
 
+  // «+» біля ад-сету: креативи цього ад-сету за той самий період — без гортання вниз
+  const asOpen=new Set();
+  let asCurK='yest';
+  const asKey=a=>a.m+'|'+(a.campaign||'')+'|'+a.adset;
+  const subCreatives=(a,k)=>{
+    const rows=(CR[k]||[]).filter(c=>c.m===a.m&&c.adset===a.adset&&(!c.campaign||!a.campaign||c.campaign===a.campaign))
+      .sort((x,y)=>((x.act===false)-(y.act===false))||(y.spend||0)-(x.spend||0));
+    if(!rows.length) return `<span style="color:var(--mut)">Немає креативів із витратами за цей період.</span>`;
+    const tot=rows.reduce((s,c)=>s+(c.spend||0),0), ii=isInst(a.m), ct2=cpaT(M[a.m]?.city);
+    const tr=rows.map(c=>{
+      const ia=c.act===false, noBk=c.book==null;
+      const cls=noBk?'':(c.cpa==null?'r':(c.cpa<ct2[0]?'g':c.cpa<ct2[1]?'y':'r'));
+      const st=noBk?'':(c.cpa==null?'без записів':(c.cpa<ct2[0]?'топ':c.cpa<ct2[1]?'норма':'дорого'));
+      const fcls=c.freq==null?'':(c.freq>=2.5?'r':c.freq>=1.8?'y':'g');
+      const v=(ii||ia)?null:crVerdict(c), mis=(ii||ia)?null:misTag.get(crKey(c));
+      const vcell=(v?`<span class="tag ${v[1]}"${v[1]?'':' style="background:var(--card2);color:var(--mut)"'}>${v[0]}</span>`:'—')
+                  +(mis?`<br><span class="tag y">⚠️ бюджет не туди</span>`:'');
+      return `<tr${ia?' class="inact"':''}><td>${c.name}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}</td>
+        <td>${fmt(c.spend)}</td><td>${tot?Math.round((c.spend||0)/tot*100)+'%':'—'}</td>
+        <td>${ii?'—':c.leads}</td><td>${ii?'—':fmt(c.cpl)}</td>
+        <td>${c.ctr!=null?c.ctr+'%':'—'}</td>
+        <td>${c.freq!=null?`<span class="tag ${fcls}">${c.freq}</span>`:'—'}</td>
+        <td>${ii?'—':noBk?'—*':c.book}</td>
+        <td>${ii||!c.leads?'—':noBk?'—*':(c.cpa!=null?`${fmt(c.cpa)} `:'')+`<span class="tag ${cls}">${st}</span>`}</td>
+        <td>${vcell}</td></tr>`;}).join('');
+    return `<table><thead><tr><th>Креатив</th><th>Витрати</th><th>% бюджету</th><th>Ліди</th><th>CPL</th><th>CTR</th><th>Частота</th><th>Записи</th><th>CPA</th><th>Вердикт</th></tr></thead><tbody>${tr}</tbody></table>`;
+  };
+  asb.addEventListener('click',e=>{const b=e.target.closest('.xp'); if(!b) return;
+    const k2=b.dataset.k; asOpen.has(k2)?asOpen.delete(k2):asOpen.add(k2); renderAdsets(asCurK);});
   function renderAdsets(k){
+    asCurK=k;
     const p=P[k], list=AS[k]||[];
     document.getElementById('asTitle').textContent=`Ад-сети (аудиторія · гео) — ${p.label} · ${p.range}`;
     asb.innerHTML='';
@@ -507,8 +545,9 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
         const low=cov!=null&&cov<0.6&&a.leads>=10&&!ii;
         const covTip=low?`Прив'язано лише ${q.leads} зі ${a.leads} лідів періоду (${Math.round(cov*100)}%) — записи недораховані, реальна CPA НИЖЧА. Дивись вкладку «7 днів».`:'';
         const of=offerInfo(a);
+        const ak=asKey(a), open=asOpen.has(ak);
         asb.insertAdjacentHTML('beforeend',`<tr class="${ia?'inact ':''}${of?'offer':''}">
-          <td>${a.adset}${of?`<span class="oftag" title="Інший оффер: ${of.o} € замість ${of.b} €">${of.o} €</span>`:''}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}<br><span style="color:var(--mut);font-size:.72rem">${a.campaign}</span></td>
+          <td><button class="xp${open?' on':''}" data-k="${ak.replace(/"/g,'&quot;')}" title="${open?'Сховати':'Показати'} креативи цього ад-сету">${open?'−':'+'}</button>${a.adset}${of?`<span class="oftag" title="Інший оффер: ${of.o} € замість ${of.b} €">${of.o} €</span>`:''}${ia?' <span style="color:var(--mut);font-size:.72rem">· вимкнений</span>':''}<br><span style="color:var(--mut);font-size:.72rem;margin-left:30px">${a.campaign}</span></td>
           <td>${budCell(a)}</td>
           <td>${fmt(a.spend)}</td><td>${ii?'—':a.leads}</td><td>${ii?'—':fmt(a.cpl)}</td>
           <td>${a.ctr!=null?a.ctr+'%':'—'}</td>
@@ -517,6 +556,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
           <td>${ii?'—':nR==null?'—*':`<span class="tag ${ncls}">${q.noresp} · ${nR}%</span>`}</td>
           <td>${ii?'—':a.book==null?'—*':low?`<span style="color:var(--mut)" title="${covTip}">≥ ${a.book} ‡</span>`:a.book}</td>
           <td>${ii?'—':a.book==null?'—*':low?`<span style="color:var(--mut)" title="${covTip}">${fmt(a.cpa)} ‡</span>`:fmt(a.cpa)}</td></tr>`);
+        if(open) asb.insertAdjacentHTML('beforeend',`<tr class="sub"><td colspan="11">${subCreatives(a,k)}</td></tr>`);
       }
     }
     const notes=[];
@@ -540,6 +580,7 @@ fetch('data.json?t='+Date.now()).then(r=>r.json()).then(D=>{
        if(s<c*0.6) bad.push(`${nm} (${s} з ${c})`); }
      if(bad.length) notes.push(`⚠️ У цих менеджерів записи НЕ прив'язуються до ад-сетів: ${bad.join(', ')} — їхня «сира» вкладка з ad_id застаріла, ліди пишуться в нову. Числа на картках правильні, а розбивка по ад-сетах і CPA для них неповні (тому 💰-алерти для них вимкнено). Скажи Клоду — підключить нову вкладку. `);}
     if(list.some(a=>a.act===false)) notes.push('Сірі рядки з позначкою «вимкнений» — ад-сети, які вже не крутяться: показані для порівняння, в кінці. ');
+    notes.push('«+» біля ад-сету — його креативи за цей самий період; «% бюджету» = частка витрат ад-сету. ');
     document.getElementById('asNote').textContent=notes.join('');
   }
 

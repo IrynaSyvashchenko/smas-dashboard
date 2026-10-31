@@ -355,6 +355,7 @@ MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
                "Даник":    (DANIK_SS, "1617315944"),   # «Даник Ирина» (12–23.09)
                "Сюзанна":  (DANIK_SS, "1834098243"),   # «Сюзанна Ирина» (з 24.09)
                "Карина":   (DANIK_SS, "2128779218"),   # «Карина Ирина» (вкладка «Карина Вера» — чужа)
+               "Катя":     (DANIK_SS, "1408066862"),   # «Катя Ирина» (з 28.10, РК Каріни)
                "Саида НВ": (NB_SS, "1779517428"),      # «Ирина НВ Париж»
                "Таня НВ форми": (NB_SS, "1694270372"),  # «Ирина НВ Таня» (з 15.10)
                "Минск":    (NB_SS, "2082198130")}      # «Минск Ирина НВ»
@@ -366,11 +367,10 @@ MANAGER_GID = {"Диана": "1178192251", "Таня": "1053387771",
 NEW_SS = "14ExTAs7xK6Dsfe-UxUP-4r3wLJK8Wb0jcCP7PscVq5I"
 # сирі вкладки нової таблиці, які адмін ховає (htmlview їх не показує) — читаємо за назвою
 NEW_HIDDEN_RAW = ("fb1", "fb2", "fb3", "fb5", "fb8", "fbS", "fbMI", "fbTI")
-# Менеджер переймає CRM-вкладку попередника: (від кого, з дати ліда, вкладки-кандидати за назвою).
-# Ліди з цієї дати у вкладці попередника рахуються новому; власна вкладка (якщо адмін
-# її створить) доливається — поки її нема, gviz віддає першу вкладку, це відсікаємо.
-MANAGER_TAKEOVER = {"Катя": ("Карина", "2026-10-28",
-                             ((DANIK_SS, "Катя Ирина"), (NEW_SS, "Катя Ирина")))}
+# Менеджер переймає РК попередника: (від кого, з дати ліда). Ліди з цієї дати, що лишились
+# у CRM-вкладці попередника, доливаються до власної вкладки наступника (MANAGER_GID);
+# у наступника рахуються лише ліди з цієї дати.
+MANAGER_TAKEOVER = {"Катя": ("Карина", "2026-10-28")}
 
 # Додаткові CRM-вкладки менеджера: рядок = назва вкладки в ГОЛОВНІЙ таблиці,
 # кортеж (ss, gid) = вкладка в іншій таблиці. Рядки доливаються до основної.
@@ -1053,27 +1053,13 @@ def _print_mgr(mgr, v):
              qa["noresp"], 100.0 * qa["noresp"] / ql,
              liq,          100.0 * liq          / ql))
 
-def _takeover_rows(mgr):
-    """Власні CRM-вкладки менеджера з MANAGER_TAKEOVER, яких може ще не бути."""
-    out = []
-    for ss2, name in MANAGER_TAKEOVER[mgr][2]:
-        try:
-            first = [r.get("phone_number") for r in fetch_sheet_rows(ss=ss2, sheet="__no_such_tab__")[:5]]
-            add = fetch_sheet_rows(ss=ss2, sheet=name)
-            if [r.get("phone_number") for r in add[:5]] == first:
-                continue                      # вкладки нема — gviz підсунув першу
-            out += [_remap_new_row(dict(r)) for r in add]
-            print("  CRM-вкладка %s (%s): %d рядків" % (name, mgr, len(add)))
-        except Exception as e:
-            print("  CRM-вкладка %s (%s) ->" % (name, mgr), str(e)[:60])
-    return out
-
 def compute_bookings(barca_camps=frozenset()):
     """Return {manager: {bookings,bookings7d,bookings1d,leads_seen}} or None on total failure."""
     today = datetime.date.fromisoformat(TODAY)
     res = {}
     taken = {MANAGER_TAKEOVER[m][0]: m for m in MANAGER_TAKEOVER}
     split = {}                                # новий менеджер -> рядки з вкладки попередника
+    own = {}                                  # наступник -> рядки власної вкладки
     for mgr, gid in MANAGER_GID.items():
         try:
             rows = fetch_sheet_rows(**_sheet_args(gid))
@@ -1094,6 +1080,9 @@ def compute_bookings(barca_camps=frozenset()):
                 print("  дод. CRM-вкладка %s (%s): %d рядків" % (extra, mgr, len(add)))
             except Exception as e:
                 print("  дод. CRM-вкладка %s FAIL ->" % (extra,), str(e)[:80])
+        if mgr in MANAGER_TAKEOVER:           # рахуємо після циклу разом з рядками попередника
+            own[mgr] = rows
+            continue
         # той самий лід живе в СТАРІЙ і НОВІЙ таблицях; дедуп лишає ОСТАННІЙ рядок.
         # Щоб запис, проставлений у будь-якій з копій, не загубився — рядки з
         # позначкою запису докидаємо в кінець: при дублі виграє забукований.
@@ -1105,8 +1094,8 @@ def compute_bookings(barca_camps=frozenset()):
         res[mgr] = _tally_manager(rows, today,
                                   lambda r: r.get("phone_number"), _iryna_row)
         _print_mgr(mgr, res[mgr])
-    for nm, (_prev, since, _tabs) in MANAGER_TAKEOVER.items():
-        rows = split.get(nm, []) + [r for r in _takeover_rows(nm)
+    for nm, (_prev, since) in MANAGER_TAKEOVER.items():
+        rows = split.get(nm, []) + [r for r in own.get(nm, [])
                                     if str(r.get("created_time") or "")[:10] >= since]
         rows += [r for r in rows if is_booked(r)]
         res[nm] = _tally_manager(rows, today, lambda r: r.get("phone_number"), _iryna_row)
@@ -1310,6 +1299,11 @@ def fetch_raw_map(barca_camps=frozenset()):
         _ingest(fetch_sheet_rows(ss=DANIK_SS, gid="501615709"), "Карина", "danik:fb1")
     except Exception as e:
         print("  сира вкладка fb1 (Каріна) ->", str(e)[:60])
+    # Катя (з 28.10): нова форма «18.09.26_newParis_Катя» -> сира вкладка fb4 тієї ж таблиці
+    try:
+        _ingest(fetch_sheet_rows(ss=DANIK_SS, gid="1312306712"), "Катя", "danik:fb4")
+    except Exception as e:
+        print("  сира вкладка fb4 (Катя) ->", str(e)[:60])
     # Новий кабінет (НВ): fb-вкладки таблиці «Лиды НВ» (fb1 = Saida Paris, fb2 = Minsk)
     nb_seen = set()
     try:
