@@ -1,0 +1,48 @@
+name: Refresh watchdog
+
+# GitHub губить запуски за розкладом (04.11: 6.5 год без жодного). Тут багато слотів на добу:
+# навіть якщо частина пропаде, якийсь спрацює. Сам refresh запускається лише якщо дані застарі
+# (те саме правило 100 хв, що й у refresh-vena.yml), або якщо з 21:00 за Прагою ще не було
+# оновлення — без нього вечірні брифи не підуть. Вночі (00–06 за Прагою) пауза.
+on:
+  schedule:
+    - cron: "7,27,47 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: refresh-watchdog
+  cancel-in-progress: false
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kick main refresh if data is stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          curl -fsS "https://raw.githubusercontent.com/$GH_REPO/main/data.json?t=$(date +%s)" -o data.json
+          NEED=$(python3 - <<'PY'
+          import datetime as d, json
+          from zoneinfo import ZoneInfo
+          tz = ZoneInfo("Europe/Prague")
+          now = d.datetime.now(tz)
+          upd = d.datetime.fromisoformat(json.load(open("data.json", encoding="utf-8"))["updated"]).astimezone(tz)
+          age = int((now - upd).total_seconds() // 60)
+          evening = now.hour >= 21 and upd < now.replace(hour=21, minute=0, second=0, microsecond=0)
+          print("yes" if now.hour >= 6 and (age >= 100 or evening) else "no")
+          print("Prague %s, data %s, age %d min, evening %s" % (now.strftime("%H:%M"), upd.strftime("%d.%m %H:%M"), age, evening), file=__import__("sys").stderr)
+          PY
+          )
+          BUSY=$(gh run list --workflow refresh.yml --limit 5 --json status --jq '[.[] | select(.status != "completed")] | length')
+          echo "need=$NEED busy=$BUSY"
+          if [ "$NEED" = "yes" ] && [ "$BUSY" = "0" ]; then
+            gh workflow run refresh.yml --ref main && echo "main refresh dispatched"
+          else
+            echo "main refresh not needed"
+          fi
