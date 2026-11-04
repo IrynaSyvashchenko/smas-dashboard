@@ -1769,8 +1769,8 @@ def build_scale(out):
         thr = CPA_THR.get(n.get("city"))
         if not last or not thr:
             health[m] = (None, thr); continue
-        sp = sum((n["spend"][i] or 0) for i, d in enumerate(n.get("dates") or []) if D(-6) <= d <= last)
-        b = sum(v or 0 for d, v in fdm.items() if D(-6) <= d <= last)
+        sp = sum((n["spend"][i] or 0) for i, d in enumerate(n.get("dates") or []) if D(-7) <= d <= last)
+        b = sum(v or 0 for d, v in fdm.items() if D(-7) <= d <= last)
         health[m] = (sp / b if b else None, thr)
     owner = {r.get("id"): r.get("m") for r in LC}
     own = lambda aid, r: owner.get(aid, r.get("m"))
@@ -2057,7 +2057,7 @@ def build_alerts(out):
         c = M[m].get("city"); nm = norm.get(c) or {}; e = last_fd(m)
         # вікно = вкладка «7 днів» дашборда, але тільки дні, які адмін уже заповнив
         # (сьогоднішні витрати без внесених записів завищують ціну — Ірина, 06.10)
-        lo = D(-6)
+        lo = D(-7)
         if not nm.get("cpa") or not e or e < lo:
             continue
         s, l = mser(m, lo, e); b = fact(m, lo, e)
