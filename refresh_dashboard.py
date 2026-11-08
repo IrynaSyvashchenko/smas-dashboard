@@ -1148,7 +1148,10 @@ RAW_SKIP_WORDS = ("copy", "recover", "backup", "бекап", "копия", "ко
 # Автоберемо лише вкладки-ЕКСПОРТИ лід-форм: назва містить «fb» (fb2, fbb, afb, dfb,
 # fbV…) або починається з дати форми («28.04.26_leads_…»). CRM-вкладки менеджерів
 # («Саида Влад», «Прага Диана») читаються за gid і другий раз не потрібні.
-RAW_TAB_RE = re.compile(r"(fb|^\d\d[.\-_ ]\d\d[.\-_ ]\d\d)", re.I)
+# 09.11.2026: день/місяць можуть бути з ОДНІЄЇ цифри — Meta називає вкладку за формою
+# («6.11.26_Tanya_Paris (3)», «6.11.26_Tanya_Paris_НВ»); з \d\d такі вкладки не читались,
+# і записи Тані з 06.11 не сідали на ад-сети й креативи.
+RAW_TAB_RE = re.compile(r"(fb|^\d{1,2}[.\-_ ]\d{1,2}[.\-_ ]\d\d)", re.I)
 SHEET_TABS = []   # діагностика: всі НЕприховані вкладки таблиці (_diag.sheetTabs)
 
 def list_tabs(ss=None):
@@ -1333,7 +1336,7 @@ def fetch_raw_map(barca_camps=frozenset()):
         _nb_fb = [r.get("id") for r in fetch_sheet_rows(ss=NB_SS, sheet="__no_such_tab__")[:5]]
     except Exception:
         _nb_fb = None
-    for _t in ("fb3",):
+    for _t in ("fb3", "fb6"):   # fb6 — перший експорт форми 6.11.26_Tanya_Paris_НВ, схована 07.11
         if _t in nb_seen:
             continue
         try:
