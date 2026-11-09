@@ -52,6 +52,10 @@ DATA_FILE  = "vena/data.json"
 # ---- напрямки (в термінах дашборда — «менеджери») -------------------------
 # classify() іде по порядку: Відень ПЕРЕД «смас», бо «15.08_Vienna_smas» містить обидва.
 LEAD_KW = {
+    # Стамбул НА ПОЧАТКУ: «8.11_Istanbul_smas» містить smas і інакше впав би в «СМАС Київ».
+    # Instagram-РК (ліди в Direct) — окрема картка «Инста…», ПЕРЕД лід-формами Стамбула.
+    "Инста Стамбул": ("istanbul_instagram", "istanbul_direct", "стамбул_инст"),
+    "Стамбул":       ("istanbul", "стамбул", "stambul"),
     # косметологія ПЕРЕД рештою: «3.09_cosmetology_USA» / «10.09_cosmetology_Ukraine».
     # США перед UA, бо запасне слово «cosmetology» в UA інакше перехопило б обидві.
     "Косметологія США": ("cosmetology_usa", "cosmetology usa"),
@@ -65,7 +69,10 @@ LEAD_KW = {
 }
 CITY_OF = {"Стомат Київ": "Київ", "Стомат Квіз": "Київ", "Відень": "Відень",
            "Тернопіль": "Тернопіль", "СМАС Київ": "Київ", "СМАС Харків": "Харків",
-           "Косметологія UA": "Україна", "Косметологія США": "США"}
+           "Косметологія UA": "Україна", "Косметологія США": "США",
+           "Стамбул": "Стамбул", "Инста Стамбул": "Стамбул"}
+# Instagram Direct: lead-екшну нема -> «ліди» = нові переписки, які рахує сама Meta.
+MSG_ACTION = "onsite_conversion.messaging_conversation_started_7d"
 
 # ---- Google-таблиця «Лиды Анна Олеговна» ----------------------------------
 SHEET_ID = "1RdXP96bS0e6UPnPrkql4z4n21cNV7FbMuk6fdWYHnPA"
@@ -97,6 +104,9 @@ FACT_GROUP  = {"Стомат Київ": ["Стомат Київ", "Стомат 
 def _fact_dir(name):
     """«название инст» у таблиці адмінів -> напрямок дашборда (None = не наше)."""
     s = (name or "").strip().lower()
+    # Стамбул (09.11 запущено лише Instagram Direct) — будь-який рядок, навіть «@…»
+    if "стамбул" in s or "istanbul" in s or "stambul" in s:
+        return "Инста Стамбул"
     if not s or s.startswith("@"):           # інстаграм-діалоги в дашборді не ведемо
         return None
     if "стоматолог" in s:                    return "Стомат Київ"
@@ -242,8 +252,9 @@ def graph_rows(fields, dfrom, dto):
             raise RuntimeError("graph HTTP %s: %s" % (e.code, body))
         for r in payload.get("data", []):
             leads = 0
+            want = MSG_ACTION if str(classify(r.get("campaign_name"))[1] or "").startswith("Инста") else "lead"
             for a in (r.get("actions") or []):
-                if a.get("action_type") == "lead":
+                if a.get("action_type") == want:
                     leads += int(float(a.get("value") or 0))
             row = {"campaign": r.get("campaign_name"), "spend": r.get("spend"),
                    "impressions": r.get("impressions"), "clicks": r.get("clicks"),
