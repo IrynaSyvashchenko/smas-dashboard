@@ -1131,6 +1131,11 @@ RAW_STATS = {}   # {вкладка: {"rows": N, "last_lead": "YYYY-MM-DD"}} — 
 # Усі ліди сирих вкладок із менеджером (і без ad/adset ID) — для capi_push.py:
 # Conversions API для CRM шле в Meta етапи ліда по його Lead ID (колонка `id`).
 RAW_LEADS = []   # [{"id", "created", "phone", "m", "adset_id", "tab"}]
+# (телефон, менеджер) -> найсвіжіший лід цього телефону В КАМПАНІЯХ ЦЬОГО менеджера.
+# 10.11.2026 (Ірина): запис належить тій менеджерці, у чиїй CRM-вкладці він стоїть.
+# Daniela L. 08.11 лишила заявки Діані (15:26) і Даші (15:36); записала Діана, а raw_map
+# по телефону віддавав найсвіжіший лід — ад-сет Даші 7.11 отримав чужий запис.
+RAW_MAP_M = {}
 # Нові сирі вкладки (після зміни лід-форм експорт пише в НОВІ вкладки — 06.08 знайдено
 # fb6..fb9, "fb1,"). Менеджер визначається ПО РЯДКУ через classify(campaign_name),
 # тож майбутні нові вкладки досить дописати сюди за назвою.
@@ -1201,6 +1206,7 @@ def fetch_raw_map(barca_camps=frozenset()):
     raw_map, got = {}, {}
     RAW_STATS.clear()   # діагностика: чи вкладка ЖИВА (наповнюється новими лідами)
     RAW_LEADS.clear()
+    RAW_MAP_M.clear()
 
     def _ingest(rows_all, default_mgr, tabname):
         """Рядки однієї вкладки -> raw_map. Менеджер рядка = classify(campaign_name)
@@ -1231,9 +1237,12 @@ def fetch_raw_map(barca_camps=frozenset()):
             ct = str(r.get("created_time") or "")
             if ct and ct < (raw_map.get(ph) or {}).get("ct", ""):
                 continue
-            raw_map[ph] = {"m": mgr, "ad_id": ad_id, "adset_id": as_id,
-                           "ad":    str(r.get("ad_name") or ""),
-                           "adset": str(r.get("adset_name") or ""), "ct": ct}
+            hit = {"m": mgr, "ad_id": ad_id, "adset_id": as_id,
+                   "ad":    str(r.get("ad_name") or ""),
+                   "adset": str(r.get("adset_name") or ""), "ct": ct}
+            if not (ct and ct < (RAW_MAP_M.get((ph, mgr)) or {}).get("ct", "")):
+                RAW_MAP_M[(ph, mgr)] = hit
+            raw_map[ph] = hit
             got[mgr] = got.get(mgr, 0) + 1
             n += 1
         print("  сира вкладка %-8s -> %d лідів з ID (останній %s)" % (tabname, n, _lastc or "?"))
@@ -1422,10 +1431,10 @@ def build_adsets(periods, yest_s, bk, raw_map, raw_ok):
             for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
                 if not _in_period(L["cd"], dfrom, dto):
                     continue
-                hit = raw_map.get(L["ph"])
-                # НЕ вимагаємо hit["m"]==mgr: у Парижі сирі вкладки перехресні, тому мітка
-                # менеджера в raw_map ненадійна, а adset_id — правильний. Менеджера ад-сета
-                # визначає кампанія (classify). Раніше ця вимога губила 11/13 записів Саиди.
+                # спершу лід цього телефону в кампаніях ТІЄЇ Ж менеджерки (чия CRM-вкладка),
+                # і лише якщо такого нема — будь-який (у Парижі сирі вкладки перехресні, тому
+                # вимагати hit["m"]==mgr не можна: раніше це губило 11/13 записів Саиди)
+                hit = RAW_MAP_M.get((L["ph"], mgr)) or raw_map.get(L["ph"])
                 if not hit or not hit["adset_id"]:
                     continue
                 q = qmap.setdefault(hit["adset_id"], {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
@@ -1492,8 +1501,8 @@ def build_creatives(periods, yest_s, bk, raw_map, raw_ok):
             for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
                 if not L["bk"] or not _in_period(L["cd"], dfrom, dto):
                     continue
-                hit = raw_map.get(L["ph"])
-                if hit and hit["ad_id"]:      # мітка менеджера в raw_map ненадійна (див. build_adsets)
+                hit = RAW_MAP_M.get((L["ph"], mgr)) or raw_map.get(L["ph"])   # див. build_adsets
+                if hit and hit["ad_id"]:
                     bmap[hit["ad_id"]] = bmap.get(hit["ad_id"], 0) + 1
 
         res = []
@@ -1555,7 +1564,7 @@ def build_adset_hist(cur, bk, raw_map, raw_ok):
         for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
             if not L["bk"] or not L["cd"] or L["cd"] < hfrom:
                 continue
-            aid = (raw_map.get(L["ph"]) or {}).get("adset_id")
+            aid = (RAW_MAP_M.get((L["ph"], mgr)) or raw_map.get(L["ph"]) or {}).get("adset_id")
             if aid in fresh:
                 fresh[aid]["days"].setdefault(L["cd"], [0.0, 0, 0])[2] += 1
     # злиття зі старою історією: свіжі дні поверх, старіші за вікно — лишаються
