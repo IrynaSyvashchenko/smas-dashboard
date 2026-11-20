@@ -42,6 +42,7 @@ jobs:
           META_TOKEN: ${{ secrets.META_TOKEN }}
           SHEETS_URL: ${{ secrets.SHEETS_URL }}
           SHEETS_KEY: ${{ secrets.SHEETS_KEY }}
+          KEYCRM_KEY: ${{ secrets.KEYCRM_KEY }}
         run: python refresh_vena.py
 
       - name: Commit if changed
