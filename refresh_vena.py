@@ -42,6 +42,14 @@ SHEETS_KEY = _clean_secret("SHEETS_KEY")
 # Кабінет ad5 бачить профіль Ірини -> окремий токен META_TOKEN_VENA.
 # Fallback на META_TOKEN (Анатолій) — на майбутнє, коли буде один спільний токен.
 META_TOKEN = _clean_secret("META_TOKEN_VENA") or _clean_secret("META_TOKEN")
+# KeyCRM (annsavi-dentalclinic.keycrm.app): з 16.11 ~23:48 Києва ліди форм Meta + Direct Стамбула +
+# квіз падають у воронки KeyCRM, і статуси адміни ставлять ТАМ. Google-вкладки лишаються для
+# старих лідів; один і той самий лід (телефон ±2 дні) зливається в один рядок.
+KEYCRM_KEY   = _clean_secret("KEYCRM_KEY")
+KEYCRM_API   = "https://openapi.keycrm.app/v1"
+KEYCRM_SINCE = "2026-11-16 00:00:00"      # UTC, день підключення джерел Facebook Leads
+KEYCRM_PIPE  = {1: "СМАС Харків", 9: "СМАС Київ", 10: "Тернопіль", 11: "Відень",
+                13: "Стамбул", 14: "Стомат Київ", 15: "Стомат Львів"}
 GRAPH_API  = "https://graph.facebook.com/v21.0"
 ACCOUNT    = "1483053046124984"          # кабінет ad5 (Анна Олеговна)
 DATE_FROM  = "2026-08-15"                # старт Ірини в цьому кабінеті
@@ -60,6 +68,8 @@ LEAD_KW = {
     # США перед UA, бо запасне слово «cosmetology» в UA інакше перехопило б обидві.
     "Косметологія США": ("cosmetology_usa", "cosmetology usa"),
     "Косметологія UA":  ("cosmetology_ukraine", "cosmetology_ua", "cosmetology"),
+    # Львів ПЕРЕД «Стомат Київ» (запуск стоматології Львова; назва РК має містити lviv/львів)
+    "Стомат Львів": ("lviv", "lvov", "львів", "львов"),
     "Стомат Київ": ("stomatologia", "viniry", "vinir", "стомат", "quiz"),
     "Відень":      ("vienna", "wien", "відень", "вена"),
     "Тернопіль":   ("ternopil", "тернопіл"),
@@ -70,7 +80,7 @@ LEAD_KW = {
 CITY_OF = {"Стомат Київ": "Київ", "Стомат Квіз": "Київ", "Відень": "Відень",
            "Тернопіль": "Тернопіль", "СМАС Київ": "Київ", "СМАС Харків": "Харків",
            "Косметологія UA": "Україна", "Косметологія США": "США",
-           "Стамбул": "Стамбул", "Инста Стамбул": "Стамбул"}
+           "Стамбул": "Стамбул", "Инста Стамбул": "Стамбул", "Стомат Львів": "Львів"}
 # Instagram Direct: lead-екшну нема -> «ліди» = нові переписки, які рахує сама Meta.
 MSG_ACTION = "onsite_conversion.messaging_conversation_started_7d"
 
@@ -193,7 +203,8 @@ def check_usd_node(m):
 
 STATUS_FIELDS = ["статус", "комментарий", "коментарий", "статус_", "lead_status",
                  "первый_звонок", "первое_сообщение", "второй_звонок", "второе_сообщение",
-                 "третий_звонок", "третье_сообщение"]
+                 "третий_звонок", "третье_сообщение",
+                 "статус_crm"]   # статус з KeyCRM — останнім, тож він «найсвіжіший»
 
 def http_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": "vena-dashboard-refresh"})
@@ -430,7 +441,7 @@ def is_booked(r):
     # до знайомих», «запишеться після відпустки» тощо давали завищення.
     if _book_date_cell(r):
         return True
-    for sf in ("статус", "статус_", "lead_status"):
+    for sf in ("статус", "статус_", "lead_status", "статус_crm"):
         s = str(r.get(sf) or "").lower()
         if "отказ" in s or "відмов" in s:
             continue
@@ -442,7 +453,9 @@ def is_booked(r):
 
 BAD_KW    = ["не из киев", "не з киев", "не з києв", "не из город", "не то место",
              "случайно", "номер не существует", "нет ватсап", "нет whatsapp",
-             "повтор номера", "не из вены", "не з відня", "другой город", "інше місто"]
+             "повтор номера", "не из вены", "не з відня", "другой город", "інше місто",
+             # статуси KeyCRM
+             "з іншого міста", "номера не існує", "протипоказ"]
 NORESP_KW = ["не прочитано", "игнор", "ігнор", "не взял", "не взяла", "не отвеч", "не відповід",
              "не вышел в диалог", "не вышла в диалог", "недозвон"]
 
@@ -532,6 +545,131 @@ def _book_kind(r):
         if "конс" in s:
             return "kons"
     return None
+
+def _kc_get(path):
+    req = urllib.request.Request(KEYCRM_API + path, headers={
+        "Authorization": "Bearer " + KEYCRM_KEY, "Accept": "application/json",
+        "User-Agent": "vena-dashboard-refresh"})
+    last = None
+    for _att in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            last = RuntimeError("KeyCRM HTTP %s" % e.code)
+            if e.code == 429:            # ліміт API ~60 запитів/хв
+                time.sleep(20); continue
+            if e.code in (401, 403):
+                raise last
+        except Exception as e:
+            last = e
+        time.sleep(3)
+    raise last
+
+def _kyiv_iso(ts):
+    try:
+        d = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00").replace(".000000", ""))
+        return d.astimezone(TZ).replace(microsecond=0).isoformat()
+    except Exception:
+        return str(ts or "")[:19]
+
+def card_manager(c):
+    """Картка KeyCRM -> напрямок дашборда (None = не наша воронка)."""
+    m = KEYCRM_PIPE.get(c.get("pipeline_id"))
+    if m == "Стомат Київ" and (str(c.get("utm_source") or "") == "quiz"
+                               or str(c.get("title") or "").lower().startswith("квіз")):
+        return "Стомат Квіз"
+    if m == "Стамбул" and not c.get("utm_campaign"):
+        return "Инста Стамбул"           # картка з переписки в Direct (без реклами-форми)
+    return m
+
+def card_phone(c):
+    for cand in re.findall(r"\+?\d[\d\s\-()]{8,}\d", json.dumps(c.get("contact") or {})):
+        ph = phone9(cand)
+        if ph:
+            return ph
+    return ""
+
+def card_status(c):
+    st = c.get("status") or {}
+    if str(st.get("alias") or "") == "successful":
+        return "запис (прийшов)"          # «Прийшов» = записався і прийшов
+    return str(st.get("title") or "").strip().lower()
+
+def fetch_keycrm():
+    """Картки KeyCRM з KEYCRM_SINCE -> ({напрямок: [рядки як у CRM-вкладці]}, {phone9: hit}, stats).
+    None, якщо ключа немає. Виняток = KeyCRM недоступний (записи тоді лишаються з минулого запуску)."""
+    if not KEYCRM_KEY:
+        return None, {}, {}
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    flt = urllib.parse.quote("%s, %s" % (KEYCRM_SINCE, now))
+    cards, page = [], 1
+    while page <= 200:
+        p = _kc_get("/pipelines/cards?limit=50&page=%d&include=contact.client,status"
+                    "&filter%%5Bcreated_between%%5D=%s" % (page, flt))
+        d = p.get("data") or []
+        cards += d
+        if not p.get("next_page_url") or not d:
+            break
+        page += 1
+        time.sleep(1.1)
+    rows_by, hits, stats = {}, {}, {}
+    for c in cards:
+        m = card_manager(c)
+        ph = card_phone(c)
+        if not m or not ph:
+            continue
+        ct = _kyiv_iso(c.get("created_at"))
+        rows_by.setdefault(m, []).append({"created_time": ct, "phone_number": ph,
+                                          "статус_crm": card_status(c), "_crm": True})
+        cur_h = hits.get(ph)
+        if cur_h is None or ct[:10] > cur_h.get("ct", ""):
+            hits[ph] = {"m": m, "ct": ct[:10], "ad_id": "", "adset_id": "",
+                        "ad": str(c.get("utm_content") or ""), "adset": str(c.get("utm_term") or ""),
+                        "campaign": str(c.get("utm_campaign") or ""),
+                        "quiz": m == "Стомат Квіз", "byname": bool(c.get("utm_term"))}
+        s = stats.setdefault(m, {"cards": 0, "booked": 0, "last": ""})
+        s["cards"] += 1
+        if is_booked({"статус_crm": card_status(c)}):
+            s["booked"] += 1
+        if ct > s["last"]:
+            s["last"] = ct[:16]
+    print("  KeyCRM: %d карток | %s" % (len(cards), ", ".join(
+        "%s %d/%d" % (k, v["booked"], v["cards"]) for k, v in sorted(stats.items()))))
+    return rows_by, hits, stats
+
+def merge_crm(rows, crm_rows):
+    """Рядки Google-вкладки + картки KeyCRM. Той самий телефон (і дата ±2 дні або дати в
+    таблиці немає) = один лід: статус KeyCRM дописується в рядок таблиці. Решта карток
+    (нові ліди без рядка в таблиці, Direct, Стамбул) додаються окремими рядками."""
+    by_ph = {}
+    for r in rows:
+        ph = phone9(_phone_of(r))
+        if ph:
+            by_ph.setdefault(ph, []).append(r)
+    extra = []
+    for c in crm_rows:
+        best = None
+        try:
+            cd = datetime.date.fromisoformat(c["created_time"][:10])
+        except Exception:
+            cd = None
+        for r in by_ph.get(c["phone_number"], []):
+            if r.get("_crm_merged"):
+                continue
+            rd = str(r.get("created_time") or "")[:10]
+            if not re.match(r"\d{4}-\d{2}-\d{2}$", rd):
+                best = best or r
+                continue
+            if cd and abs((datetime.date.fromisoformat(rd) - cd).days) <= 2:
+                best = r
+                break
+        if best is not None:
+            best["статус_crm"] = c["статус_crm"]
+            best["_crm_merged"] = True
+        else:
+            extra.append(c)
+    return list(rows) + extra
 
 def _tally_manager(rows, today, raw_idx):
     """Метрики однієї CRM-вкладки. Лід Ірини = created_time >= DATE_FROM
@@ -624,16 +762,23 @@ def _tally_manager(rows, today, raw_idx):
             "kons": K, "inst": I,
             "leadsQ": leadsQ, "booked_keys": booked_keys}
 
-def compute_bookings(raw_idx):
+def compute_bookings(raw_idx, crm_rows=None):
     today = datetime.date.fromisoformat(TODAY)
     res = {}
-    for mgr, sheets in MANAGER_SHEET.items():
+    crm_rows = crm_rows or {}
+    for mgr in list(MANAGER_SHEET) + [m for m in crm_rows if m not in MANAGER_SHEET]:
+        sheets = MANAGER_SHEET.get(mgr) or []
         rows = []
         for sheet in ([sheets] if isinstance(sheets, str) else sheets):
             try:
                 rows += fetch_sheet_rows(sheet)
             except Exception as e:
                 print("  CRM-вкладка FAIL", mgr, sheet, "->", str(e)[:80])
+        if crm_rows.get(mgr):
+            n0 = len(rows)
+            rows = merge_crm(rows, crm_rows[mgr])
+            print("  KeyCRM -> %-13s карток %d, нових рядків %d (решта злиті з таблицею)"
+                  % (mgr, len(crm_rows[mgr]), len(rows) - n0))
         if not rows:
             continue
         res[mgr] = _tally_manager(rows, today, raw_idx)
@@ -683,6 +828,16 @@ def build_adsets(periods, bk, raw_map):
             if len(quiz_ids) == 1:
                 return next(iter(quiz_ids))
             return _pick_by_date(list(quiz_ids), lambda a: quiz_ids[a], cd)
+        def _byname_adset(hit):
+            # картки KeyCRM без ad_id: ад-сет за назвою (utm_term), при дублях — ще й за кампанією
+            want = str(hit.get("adset") or "").strip().lower()
+            if not want:
+                return ""
+            c = [a_id for a_id, a_ in agg.items() if str(a_.get("adset") or "").strip().lower() == want]
+            camp = str(hit.get("campaign") or "").strip().lower()
+            if len(c) > 1 and camp:
+                c = [a_id for a_id in c if str(agg[a_id].get("campaign") or "").strip().lower() == camp] or c
+            return c[0] if c else ""
         qmap = {}
         for mgr in (bk or {}):
             for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
@@ -691,7 +846,8 @@ def build_adsets(periods, bk, raw_map):
                 hit = raw_map.get(L["ph"])
                 if not hit:
                     continue
-                aid_h = hit["adset_id"] or (_quiz_adset(hit, L["cd"]) if hit.get("quiz") else "")
+                aid_h = hit["adset_id"] or (_quiz_adset(hit, L["cd"]) if hit.get("quiz") else
+                                            (_byname_adset(hit) if hit.get("byname") else ""))
                 if not aid_h:
                     continue
                 q = qmap.setdefault(aid_h, {"leads": 0, "bad": 0, "noresp": 0, "book": 0})
@@ -782,6 +938,19 @@ def build_creatives(periods, bk, raw_map):
             if len(cands) > 1:
                 return _pick_by_date(cands, lambda a: agg[a].get("adset"), cd)
             return cands[0] if len(cands) == 1 else None
+        def _byname_ad(hit):
+            # картки KeyCRM без ad_id: оголошення за назвою (utm_content) у тому ж ад-сеті (utm_term)
+            want = str(hit.get("ad") or "").strip().lower()
+            if not want:
+                return None
+            c = [a_id for a_id, a_ in agg.items() if str(a_.get("ad") or "").strip().lower() == want]
+            wset = str(hit.get("adset") or "").strip().lower()
+            if len(c) > 1 and wset:
+                c = [a_id for a_id in c if str(agg[a_id].get("adset") or "").strip().lower() == wset] or c
+            camp = str(hit.get("campaign") or "").strip().lower()
+            if len(c) > 1 and camp:
+                c = [a_id for a_id in c if str(agg[a_id].get("campaign") or "").strip().lower() == camp] or c
+            return c[0] if c else None
         bmap = {}
         for mgr in (bk or {}):
             for L in (bk.get(mgr, {}) or {}).get("leadsQ", []):
@@ -790,7 +959,8 @@ def build_creatives(periods, bk, raw_map):
                 hit = raw_map.get(L["ph"])
                 if not hit:
                     continue
-                aid_h = hit["ad_id"] or (_quiz_ad(hit, L["cd"]) if hit.get("quiz") else None)
+                aid_h = hit["ad_id"] or (_quiz_ad(hit, L["cd"]) if hit.get("quiz") else
+                                         (_byname_ad(hit) if hit.get("byname") else None))
                 if aid_h:
                     bmap[aid_h] = bmap.get(aid_h, 0) + 1
         try:
@@ -983,10 +1153,24 @@ def main():
     _raw_missing = sorted(_prev_tabs - set(raw_stats.keys()))
     if _raw_missing:
         print("СИРІ ВКЛАДКИ НЕ ПРОЧИТАЛИСЬ:", ", ".join(_raw_missing), "-> ад-сети/креативи лишаю попередні")
+    # ---- KeyCRM: статуси нових лідів (з 16.11) адміни ставлять там ----
+    crm_rows, crm_stats, crm_failed = None, {}, False
     try:
-        bk = compute_bookings(raw_idx)
+        crm_rows, crm_hits, crm_stats = fetch_keycrm()
+        for _ph, _h in (crm_hits or {}).items():
+            if _ph not in raw_idx:       # сира вкладка Meta має ad_id — вона точніша
+                raw_idx[_ph] = _h
     except Exception as e:
-        print("BOOKINGS failed -> carrying over:", e); bk = None
+        crm_failed = True
+        print("KeyCRM FAIL -> записи й ад-сети лишаю з минулого запуску:", str(e)[:160])
+    if crm_failed:
+        bk = None                        # без KeyCRM нові записи «зникли б» — краще старі числа
+        _raw_missing = (_raw_missing or []) + ["KeyCRM"]
+    else:
+        try:
+            bk = compute_bookings(raw_idx, crm_rows)
+        except Exception as e:
+            print("BOOKINGS failed -> carrying over:", e); bk = None
     if bk:
         reg = cur.get("_bookReg") or {}
         # дата СТАРТУ запуску, не поточний момент: вечірній рефреш стартує ~23:59 і
@@ -1048,7 +1232,8 @@ def main():
                     if not L.get("cd") or L["cd"] < _d7:
                         continue
                     hit = raw_idx.get(L["ph"])
-                    ok = bool(hit and (hit.get("ad_id") or hit.get("adset_id") or hit.get("quiz")))
+                    ok = bool(hit and (hit.get("ad_id") or hit.get("adset_id") or hit.get("quiz")
+                                       or hit.get("byname")))
                     n += 1; k += 1 if ok else 0
                     if L.get("bk"):
                         nb += 1; kb += 1 if ok else 0
@@ -1100,7 +1285,7 @@ def main():
             print("period metrics failed:", e)
 
         raw_map = {ph: h for ph, h in raw_idx.items()
-                   if h.get("ad_id") or h.get("adset_id") or h.get("quiz")}
+                   if h.get("ad_id") or h.get("adset_id") or h.get("quiz") or h.get("byname")}
 
         def _merge_periods(field, fresh):
             if not fresh:
@@ -1149,7 +1334,9 @@ def main():
 
     # при збої зберігаємо попередній список вкладок, щоб наступний запуск знову звіряв з повним набором
     out["_diag"] = {"rawTabs": (dict(((cur.get("_diag") or {}).get("rawTabs") or {}), **raw_stats)
-                                if _raw_missing else raw_stats)}
+                                if _raw_missing else raw_stats),
+                    "keycrm": ({"failed": True, "prev": (cur.get("_diag") or {}).get("keycrm")}
+                               if crm_failed else (crm_stats if KEYCRM_KEY else {"off": True}))}
     # залишок лідів плану ADSQuiz (див. ADSQUIZ_PLAN); None, якщо квіз-лист не прочитався
     _qs = (raw_stats.get("Квіз Ирина") or {}).get("since_base")
     out["adsquiz"] = {"baseAt": ADSQUIZ_PLAN["base_at"], "baseLeft": ADSQUIZ_PLAN["base_left"],
